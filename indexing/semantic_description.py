@@ -155,11 +155,11 @@ def get_cache_stats() -> dict:
 
 # ── Standalone test ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n📝 Testing semantic description generator...\n")
+    print("\n[INFO] Testing semantic description generator...\n")
 
     # Verify Gemini API key is set
     if not GEMINI_API_KEY:
-        print("  ❌ GEMINI_API_KEY not set in .env")
+        print("  [FAIL] GEMINI_API_KEY not set in .env")
         sys.exit(1)
     print(f"  API Key  : {GEMINI_API_KEY[:8]}...{GEMINI_API_KEY[-4:]}")
 
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     }
 
     # Test 1: Generate description (cache MISS)
-    print("\n── Test 1: Generate description (cache MISS) ──")
+    print("\n--- Test 1: Generate description (cache MISS) ---")
     clear_cache()
     import time
     start = time.time()
@@ -195,23 +195,23 @@ if __name__ == "__main__":
     print(f"  Result   : {desc[:200]}...")
 
     # Test 2: Get description again (cache HIT)
-    print("\n── Test 2: Get description (cache HIT) ──")
+    print("\n--- Test 2: Get description (cache HIT) ---")
     start = time.time()
     desc2 = get_semantic_description(test_meta)
     elapsed = time.time() - start
     print(f"  Time     : {elapsed:.4f}s  (should be near-instant)")
     assert desc == desc2, "Cache returned different result!"
-    print(f"  ✅ Cache hit — same result, no API call")
+    print(f"  [OK] Cache hit -- same result, no API call")
 
     # Test 3: Cache stats
-    print("\n── Test 3: Cache stats ──")
+    print("\n--- Test 3: Cache stats ---")
     stats = get_cache_stats()
     print(f"  File     : {stats['cache_file']}")
     print(f"  Entries  : {stats['entries']}")
     print(f"  Exists   : {stats['file_exists']}")
 
     # Test 4: Modified schema triggers cache MISS
-    print("\n── Test 4: Schema change triggers fresh LLM call ──")
+    print("\n--- Test 4: Schema change triggers fresh LLM call ---")
     modified_meta = {**test_meta, "columns": test_meta["columns"] + [
         {"name": "ClosedBy", "type": "varchar(100)"}
     ]}
@@ -223,13 +223,13 @@ if __name__ == "__main__":
 
     stats = get_cache_stats()
     assert stats["entries"] == 2, f"Expected 2 cache entries, got {stats['entries']}"
-    print(f"  ✅ Cache now has {stats['entries']} entries")
+    print(f"  [OK] Cache now has {stats['entries']} entries")
 
     # Cleanup
-    print("\n── Cleanup ──")
+    print("\n--- Cleanup ---")
     clear_cache()
 
     print("\n" + "=" * 55)
-    print("  ✅  Semantic description — all tests passed!")
+    print("  [OK]  Semantic description -- all tests passed!")
     print("=" * 55)
     sys.exit(0)

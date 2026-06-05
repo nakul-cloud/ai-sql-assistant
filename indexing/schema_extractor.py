@@ -101,10 +101,10 @@ def extract_single_table(table_name: str, schema: str = "dbo") -> dict | None:
 
 # ── Standalone test ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n🔍 Testing schema extractor...\n")
+    print("\n[INFO] Testing schema extractor...\n")
 
     # Test 1: Extract all tables
-    print("── Test 1: Extract all tables ──")
+    print("--- Test 1: Extract all tables ---")
     start = time.time()
     all_tables = extract_all_tables()
     elapsed = time.time() - start
@@ -113,16 +113,16 @@ if __name__ == "__main__":
     print(f"  Time     : {elapsed:.2f}s")
 
     if not all_tables:
-        print("\n  ⚠️  No tables found (database is empty).")
-        print("  This is fine — tables will appear after CSV upload")
+        print("\n  [WARNING] No tables found (database is empty).")
+        print("  This is fine -- tables will appear after CSV upload")
         print("  or when you add data to your database.")
         print("\n" + "=" * 55)
-        print("  ✅  Schema extractor — working (0 tables to extract)")
+        print("  [OK] Schema extractor -- working (0 tables to extract)")
         print("=" * 55)
         sys.exit(0)
 
     # Test 2: Inspect first table structure
-    print("\n── Test 2: Inspect formatted output ──")
+    print("\n--- Test 2: Inspect formatted output ---")
     sample = all_tables[0]
     print(f"  Table    : {sample['table_name']}")
     print(f"  Columns  : {len(sample['columns'])}")
@@ -139,17 +139,17 @@ if __name__ == "__main__":
         f"Key mismatch: missing={expected_keys - actual_keys}, "
         f"extra={actual_keys - expected_keys}"
     )
-    print(f"  ✅ All expected keys present")
+    print(f"  [OK] All expected keys present")
 
     # Test 3: Single table extraction
-    print("\n── Test 3: Single table extraction ──")
+    print("\n--- Test 3: Single table extraction ---")
     single = extract_single_table(sample["table_name"])
     if single:
-        print(f"  ✅ Extracted: {single['table_name']} ({len(single['columns'])} cols)")
+        print(f"  [OK] Extracted: {single['table_name']} ({len(single['columns'])} cols)")
     else:
-        print(f"  ❌ Failed to extract: {sample['table_name']}")
+        print(f"  [FAIL] Failed to extract: {sample['table_name']}")
 
     print("\n" + "=" * 55)
-    print("  ✅  Schema extractor — all tests passed!")
+    print("  [OK] Schema extractor -- all tests passed!")
     print("=" * 55)
     sys.exit(0)
