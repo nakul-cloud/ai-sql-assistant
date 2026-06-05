@@ -23,6 +23,7 @@ Usage:
 
 import os
 import sys
+from functools import lru_cache
 
 from dotenv import load_dotenv
 from sqlalchemy import text
@@ -120,35 +121,49 @@ def _get_row_count(conn, schema: str, table: str) -> int:
 def _get_sample_values(conn, schema: str, table: str, columns: list[dict]) -> dict:
     """
     Return a few distinct sample values per column for LLM context.
-    Uses TOP N with DISTINCT to get representative values.
+    Fetches TOP 100 rows once and computes distinct values in Python to avoid
+    costly full table scans on large, unindexed tables.
     """
     sample_values = {}
     quoted_table = f"[{schema}].[{table}]"
 
-    for col in columns:
-        col_name = col["name"]
-        try:
-            # Use dynamic SQL safely — schema/table/column are from INFORMATION_SCHEMA
-            query = text(
-                f"SELECT DISTINCT TOP {SAMPLE_SIZE} [{col_name}] "
-                f"FROM {quoted_table} "
-                f"WHERE [{col_name}] IS NOT NULL"
-            )
-            rows = conn.execute(query).fetchall()
-            values = [str(r[0]) for r in rows]
-            if values:
-                sample_values[col_name] = values
-        except Exception:
-            # Skip columns that can't be sampled (e.g., image, xml types)
-            continue
+    try:
+        # Fetch just the top 100 rows
+        query = text(f"SELECT TOP 100 * FROM {quoted_table}")
+        rows = conn.execute(query).fetchall()
+
+        if rows:
+            for i, col in enumerate(columns):
+                col_name = col["name"]
+                
+                # Extract unique non-null values for this column from the 100 rows
+                unique_vals = []
+                seen = set()
+                for r in rows:
+                    val = r[i]
+                    if val is not None:
+                        val_str = str(val)
+                        if val_str not in seen:
+                            seen.add(val_str)
+                            unique_vals.append(val_str)
+                            if len(unique_vals) >= SAMPLE_SIZE:
+                                break
+                                
+                if unique_vals:
+                    sample_values[col_name] = unique_vals
+    except Exception as e:
+        # Failsafe for unreadable tables
+        pass
 
     return sample_values
 
 
+@lru_cache(maxsize=64)
 def fetch_single_table(table_name: str, schema: str = "dbo") -> dict | None:
     """
     Fetch metadata for a single table.
-    Returns a metadata dict or None if the table doesn't exist.
+    Results are cached in-process (LRU) so repeated calls within the same
+    app session do not hit SQL Server again — eliminating schema query latency.
     """
     engine = get_engine()
 

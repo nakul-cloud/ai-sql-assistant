@@ -12,7 +12,7 @@ from typing import Dict, Any
 from google import genai
 from dotenv import load_dotenv
 
-from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL
+from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL, generate_content_with_retry
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -108,7 +108,8 @@ def generate_sql_query(user_query: str, schema_context: str) -> Dict[str, Any]:
             user_query=user_query
         )
         
-        response = client.models.generate_content(
+        response = generate_content_with_retry(
+            client,
             model=GEMINI_MODEL,
             contents=prompt,
         )

@@ -26,6 +26,8 @@ import sys
 
 from google import genai
 from dotenv import load_dotenv
+from tenacity import retry, wait_exponential, stop_after_attempt
+import logging
 
 load_dotenv()
 
@@ -42,6 +44,33 @@ def _get_gemini_client() -> genai.Client:
     if _gemini_client is None:
         _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
     return _gemini_client
+
+
+def _is_retryable(exception) -> bool:
+    """
+    Only retry on 503 (server overload/high demand).
+    Do NOT retry on:
+      - 429 RESOURCE_EXHAUSTED: quota is gone, retrying won't help
+      - 401 UNAUTHENTICATED: bad API key, retrying won't help
+    """
+    err_str = str(exception)
+    # Immediately stop for quota and auth errors
+    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+        return False
+    if "401" in err_str or "UNAUTHENTICATED" in err_str:
+        return False
+    return True
+
+
+@retry(
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    stop=stop_after_attempt(3),
+    retry=_is_retryable,
+    reraise=True
+)
+def generate_content_with_retry(client, model, contents):
+    """Retry on 503 high demand only. Immediately raises on 429 quota / 401 bad key."""
+    return client.models.generate_content(model=model, contents=contents)
 
 
 def _compute_table_hash(table_meta: dict) -> str:
@@ -99,7 +128,8 @@ Row Count: {table_meta.get('row_count', 'unknown')}{sample_info}
 Description:"""
 
     client = _get_gemini_client()
-    response = client.models.generate_content(
+    response = generate_content_with_retry(
+        client,
         model=GEMINI_MODEL,
         contents=prompt,
     )

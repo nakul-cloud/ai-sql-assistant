@@ -10,7 +10,7 @@ import logging
 from typing import Dict, Any
 
 from dotenv import load_dotenv
-from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL
+from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL, generate_content_with_retry
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -69,7 +69,8 @@ def generate_natural_language_response(
             query_result=formatted_result
         )
 
-        response = client.models.generate_content(
+        response = generate_content_with_retry(
+            client,
             model=GEMINI_MODEL,
             contents=prompt,
         )

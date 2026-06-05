@@ -17,8 +17,7 @@ import re
 import sys
 from dotenv import load_dotenv
 
-# Lazy loading of Gemini client to ensure correct PyTorch thread init order
-from indexing.semantic_description import _get_gemini_client
+from indexing.semantic_description import _get_gemini_client, generate_content_with_retry
 
 load_dotenv()
 
@@ -89,7 +88,8 @@ def llm_classify_intent(user_query: str) -> str:
     """
     try:
         client = _get_gemini_client()
-        response = client.models.generate_content(
+        response = generate_content_with_retry(
+            client,
             model=GEMINI_MODEL,
             contents=prompt,
         )

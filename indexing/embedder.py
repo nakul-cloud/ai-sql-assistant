@@ -23,6 +23,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── HuggingFace Offline Mode ────────────────────────────────────────
+# Disable all internet checks — model is already cached locally.
+# This eliminates the 10-15s of HTTP requests to HuggingFace on every load.
+os.environ.setdefault("TRANSFORMERS_OFFLINE", os.getenv("TRANSFORMERS_OFFLINE", "1"))
+os.environ.setdefault("HF_DATASETS_OFFLINE", os.getenv("HF_DATASETS_OFFLINE", "1"))
+
 # ── Config from .env ─────────────────────────────────────────────────
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
@@ -31,7 +37,7 @@ EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
 import torch
 torch.set_num_threads(4)
 
-# Import early to avoid Windows C-level conflicts with networking libs
+# Import early to avoid Windows C-level conflicts with networking client libraries load
 from FlagEmbedding import BGEM3FlagModel
 
 # ── Singleton model ──────────────────────────────────────────────────

@@ -105,9 +105,33 @@ if user_input:
             res = process_user_query(user_input, focus_tables=focus_list)
             
             if not res["success"]:
-                err_msg = f"❌ Error: {res.get('error', 'Query processing failed.')}"
+                raw_error = res.get("error", "Query processing failed.")
+                
+                # Friendly error messages based on error type
+                if "429" in raw_error or "RESOURCE_EXHAUSTED" in raw_error:
+                    err_msg = (
+                        "⚠️ **API Quota Exhausted**\n\n"
+                        "Your Gemini API free-tier quota has been used up.\n\n"
+                        "**Quick fix options:**\n"
+                        "1. Get a new API key from [aistudio.google.com](https://aistudio.google.com) "
+                        "(use a different Google account) and update `GEMINI_API_KEY` in your `.env` file.\n"
+                        "2. Enable billing on your Google Cloud project to remove the limit.\n\n"
+                        "The model `gemini-2.0-flash` gives **1,500 free calls/day** — "
+                        "make sure the key was created in [AI Studio](https://aistudio.google.com), not Google Cloud Console."
+                    )
+                elif "401" in raw_error or "UNAUTHENTICATED" in raw_error:
+                    err_msg = (
+                        "🔑 **Invalid API Key**\n\n"
+                        "Your `GEMINI_API_KEY` is invalid or expired.\n"
+                        "Please go to [aistudio.google.com](https://aistudio.google.com), "
+                        "generate a new key, and update it in your `.env` file."
+                    )
+                else:
+                    err_msg = f"❌ **Error:** {raw_error}"
+                    
                 st.error(err_msg)
                 st.session_state.messages.append({"role": "assistant", "content": err_msg})
+
             else:
                 intent = res.get("intent", "SQL_QUERY")
                 nl_response = res.get("nl_response", "")
