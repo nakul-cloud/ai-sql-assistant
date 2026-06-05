@@ -134,9 +134,9 @@ def build_all_chunks(all_table_meta: list[dict]) -> list[Chunk]:
         try:
             chunks = build_table_chunks(meta)
             all_chunks.extend(chunks)
-            print(f"  [{i}/{total}] ✅ {meta['table_name']} → {len(chunks)} chunks")
+            print(f"  [{i}/{total}] [OK] {meta['table_name']} -> {len(chunks)} Chunks")
         except Exception as e:
-            print(f"  [{i}/{total}] ❌ {meta['table_name']} — Error: {e}")
+            print(f"  [{i}/{total}] [FAIL] {meta['table_name']} -- Error: {e}")
             continue
 
     print(f"\n  Built {len(all_chunks)} chunks from {total} tables.")
@@ -145,7 +145,7 @@ def build_all_chunks(all_table_meta: list[dict]) -> list[Chunk]:
 
 # ── Standalone test ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n🧱 Testing chunk builder...\n")
+    print("\n[INFO] Testing chunk builder...\n")
 
     # Create fake table metadata
     test_meta = {
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     }
 
     # Test 1: Build chunks for a single table
-    print("── Test 1: Build chunks for one table ──")
+    print("--- Test 1: Build chunks for one table ---")
     start = time.time()
     chunks = build_table_chunks(test_meta)
     elapsed = time.time() - start
@@ -184,10 +184,10 @@ if __name__ == "__main__":
     assert len(chunks) == 2, f"Expected 2 chunks, got {len(chunks)}"
     assert chunks[0].metadata["chunk_type"] == "structural"
     assert chunks[1].metadata["chunk_type"] == "semantic"
-    print(f"\n  ✅ Correct: 2 chunks (structural + semantic)")
+    print(f"\n  [OK] Correct: 2 chunks (structural + semantic)")
 
     # Test 2: Build chunks for multiple tables (batch)
-    print("\n── Test 2: Batch chunk building ──")
+    print("\n--- Test 2: Batch chunk building ---")
     test_meta_2 = {
         "table_name": "dbo.Customers",
         "columns": [
@@ -205,14 +205,14 @@ if __name__ == "__main__":
 
     all_chunks = build_all_chunks([test_meta, test_meta_2])
     assert len(all_chunks) == 4, f"Expected 4 chunks, got {len(all_chunks)}"
-    print(f"  ✅ Batch: 4 chunks from 2 tables")
+    print(f"  [OK] Batch: 4 chunks from 2 tables")
 
     # Cleanup description cache from test
     from indexing.semantic_description import clear_cache
-    print("\n── Cleanup ──")
+    print("\n--- Cleanup ---")
     clear_cache()
 
     print("\n" + "=" * 55)
-    print("  ✅  Chunk builder — all tests passed!")
+    print("  [OK]  Chunk builder -- all tests passed!")
     print("=" * 55)
     sys.exit(0)

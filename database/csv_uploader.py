@@ -189,23 +189,22 @@ def upload_csv_and_index(
     if not success:
         return False, msg
 
+    sanitized = _sanitize_table_name(table_name)
+
     # Step 3: Trigger incremental Qdrant re-index
-    # (Will be wired in after indexing pipeline is built)
-    # from indexing.index_manager import incremental_reindex
-    # incremental_reindex(_sanitize_table_name(table_name))
+    from indexing.index_manager import index_single_table
+    index_single_table("dbo", sanitized)
 
     # Step 4: Bust schema metadata cache
-    # (Will be wired in after caching is added)
-    # from database.schema_manager import fetch_database_metadata
-    # fetch_database_metadata(force_refresh=True)
+    from database.schema_manager import fetch_database_metadata
+    fetch_database_metadata(force_refresh=True)
 
-    sanitized = _sanitize_table_name(table_name)
-    return True, f"✅ {msg} — table '{sanitized}' is ready to query!"
+    return True, f"[OK] {msg} — table '{sanitized}' is ready to query!"
 
 
 # ── Standalone test ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n📄 Testing CSV uploader...\n")
+    print("\n[INFO] Testing CSV uploader...\n")
 
     # Create a small test CSV in memory
     test_csv_path = os.path.join(UPLOAD_DIR, "_test_upload.csv")
@@ -222,45 +221,45 @@ if __name__ == "__main__":
     print(f"  Created test CSV: {test_csv_path}")
 
     # Step 1: Test parsing
-    print("\n── Step 1: Parsing CSV ──")
+    print("\n--- Step 1: Parsing CSV ---")
     df, err = process_csv(test_csv_path)
     if err:
-        print(f"  ❌ Parse failed: {err}")
+        print(f"  [FAIL] Parse failed: {err}")
         sys.exit(1)
-    print(f"  ✅ Parsed: {len(df)} rows × {len(df.columns)} columns")
+    print(f"  [OK] Parsed: {len(df)} rows x {len(df.columns)} columns")
     print(f"  Columns: {list(df.columns)}")
 
     # Step 2: Test upload to SQL Server
-    print("\n── Step 2: Uploading to SQL Server ──")
+    print("\n--- Step 2: Uploading to SQL Server ---")
     success, msg = upload_df_to_sql(df, "_test_upload", if_exists="replace")
     if success:
-        print(f"  ✅ {msg}")
+        print(f"  [OK] {msg}")
     else:
-        print(f"  ❌ {msg}")
+        print(f"  [FAIL] {msg}")
         sys.exit(1)
 
     # Step 3: Verify by reading back
-    print("\n── Step 3: Verifying upload ──")
+    print("\n--- Step 3: Verifying upload ---")
     from sqlalchemy import text
     engine = get_engine()
     sanitized_name = _sanitize_table_name("_test_upload")
     with engine.connect() as conn:
         result = conn.execute(text(f"SELECT COUNT(*) FROM [dbo].[{sanitized_name}]"))
         count = result.fetchone()[0]
-        print(f"  ✅ Read back {count} rows from [dbo].[{sanitized_name}]")
+        print(f"  [OK] Read back {count} rows from [dbo].[{sanitized_name}]")
 
     # Step 4: Clean up test table
-    print("\n── Step 4: Cleaning up ──")
+    print("\n--- Step 4: Cleaning up ---")
     with engine.connect() as conn:
         conn.execute(text(f"DROP TABLE IF EXISTS [dbo].[{sanitized_name}]"))
         conn.commit()
-        print(f"  ✅ Dropped test table [{sanitized_name}]")
+        print(f"  [OK] Dropped test table [{sanitized_name}]")
 
     # Clean up test CSV
     os.remove(test_csv_path)
-    print(f"  ✅ Deleted test CSV: {test_csv_path}")
+    print(f"  [OK] Deleted test CSV: {test_csv_path}")
 
     print("\n" + "=" * 55)
-    print("  ✅  CSV uploader — all tests passed!")
+    print("  [OK] CSV uploader -- all tests passed!")
     print("=" * 55)
     sys.exit(0)

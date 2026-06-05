@@ -188,7 +188,7 @@ def fetch_database_metadata(force_refresh: bool = False) -> list[dict]:
     with engine.connect() as conn:
         tables = _get_all_table_names(conn)
 
-        print(f"📋 Found {len(tables)} tables in database.")
+        print(f"[INFO] Found {len(tables)} tables in database.")
 
         for i, tbl in enumerate(tables, 1):
             schema = tbl["schema"]
@@ -210,31 +210,31 @@ def fetch_database_metadata(force_refresh: bool = False) -> list[dict]:
                     "sample_values": sample_values,
                 })
 
-                print(f"  [{i}/{len(tables)}] ✅ {full_name} — "
+                print(f"  [{i}/{len(tables)}] [OK] {full_name} -- "
                       f"{len(columns)} cols, {row_count} rows")
 
             except Exception as e:
-                print(f"  [{i}/{len(tables)}] ❌ {full_name} — Error: {e}")
+                print(f"  [{i}/{len(tables)}] [FAIL] {full_name} -- Error: {e}")
                 continue
 
-    print(f"\n✅ Extracted metadata for {len(metadata_list)}/{len(tables)} tables.")
+    print(f"\n[OK] Extracted metadata for {len(metadata_list)}/{len(tables)} tables.")
     return metadata_list
 
 
 # ── Standalone test ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n📊 Extracting database schema metadata...\n")
+    print("\n[INFO] Extracting database schema metadata...\n")
 
     metadata = fetch_database_metadata()
 
     if not metadata:
-        print("\n⚠️  No tables found. Is the database empty?")
+        print("\n[WARNING] No tables found. Is the database empty?")
         print("   You may need to create some tables first.")
         sys.exit(1)
 
     # Print a summary of the first table as a sample
     print("\n" + "=" * 60)
-    print("📝 Sample — first table metadata:")
+    print("Sample -- first table metadata:")
     print("=" * 60)
 
     sample = metadata[0]
@@ -244,14 +244,14 @@ if __name__ == "__main__":
     print(f"  Row Count    : {sample['row_count']}")
     print(f"  Columns list :")
     for col in sample["columns"]:
-        pk_marker = " 🔑" if col["name"] in sample["primary_keys"] else ""
+        pk_marker = " [PK]" if col["name"] in sample["primary_keys"] else ""
         nullable = "NULL" if col["nullable"] else "NOT NULL"
-        print(f"    • {col['name']} ({col['display_type']}, {nullable}){pk_marker}")
+        print(f"    - {col['name']} ({col['display_type']}, {nullable}){pk_marker}")
 
     if sample["sample_values"]:
         print(f"  Sample values:")
         for col_name, vals in list(sample["sample_values"].items())[:3]:
-            print(f"    • {col_name}: {vals}")
+            print(f"    - {col_name}: {vals}")
 
-    print("\n✅ Schema extraction complete.")
+    print("\n[OK] Schema extraction complete.")
     sys.exit(0)
