@@ -190,7 +190,8 @@ ai-sql-assistant/
 │   └── query_cache.py               #   Cache read/write via Qdrant
 │
 ├── analysis/
-│   └── schema_context.py            #   Build schema prompt for LLM
+│   ├── schema_context.py            #   Build schema prompt for LLM
+│   └── result_enricher.py           #   Semantic SQL output enrichment
 │
 ├── llm/
 │   ├── query_ai.py                  #   Gemini SQL generation
@@ -294,8 +295,9 @@ python -m indexing.schema_extractor    # Schema extraction + formatting
 4. **SQL generation** — Gemini Flash produces a SELECT query
 5. **Validation** — ensures only SELECT statements pass through
 6. **Execution** — runs against SQL Server, returns results
-7. **NL response** — Gemini Flash summarizes results in plain English
-8. **Cache store** — saves the query + response for future cache hits
+7. **Semantic Enrichment** — analyzes rows to build lightweight statistical profiles
+8. **NL response** — Gemini Flash summarizes enriched results in plain English
+9. **Cache store** — saves the query + response for future cache hits
 
 ---
 
@@ -333,13 +335,14 @@ python -m indexing.schema_extractor    # Schema extraction + formatting
 | 11 | `retrieval/table_retriever.py` | ✅ Done |
 | 12 | `retrieval/query_cache.py` | ✅ Done |
 | 13 | `analysis/schema_context.py` | ✅ Done |
-| 14 | `llm/query_ai.py` | ✅ Done |
-| 15 | `llm/response_generator.py` | ✅ Done |
-| 16 | `workflow/process_query.py` | ✅ Done |
-| 17 | `workflow/query_executor.py` | ✅ Done |
-| 18 | `pages/chat_page.py` | ✅ Done |
-| 19 | `pages/upload_page.py` | ✅ Done |
-| 20 | `app.py` | ✅ Done |
+| 14 | `analysis/result_enricher.py` | ✅ Done |
+| 15 | `llm/query_ai.py` | ✅ Done |
+| 16 | `llm/response_generator.py` | ✅ Done |
+| 17 | `workflow/process_query.py` | ✅ Done |
+| 18 | `workflow/query_executor.py` | ✅ Done |
+| 19 | `pages/chat_page.py` | ✅ Done |
+| 20 | `pages/upload_page.py` | ✅ Done |
+| 21 | `app.py` | ✅ Done |
 
 ---
 

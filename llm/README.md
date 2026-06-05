@@ -14,8 +14,9 @@ flowchart LR
     Cleaner -->|3. Regex Guardrails| Validator[SQL Validator]
     Validator -->|Output Safe SQL| Exec[Execution Output]
     
-    Exec & UserQ & SQLGen --> NLGen[response_generator.py]
-    NLGen -->|4. Format Results| GeminiR[Gemini Client]
+    Exec --> Enricher[result_enricher.py]
+    Enricher & UserQ & SQLGen --> NLGen[response_generator.py]
+    NLGen -->|4. Summarize Enriched Profile| GeminiR[Gemini Client]
     GeminiR -->|Conversational Summary| FinalAns[Plain English Answer]
 ```
 
@@ -36,7 +37,7 @@ Generates SQL queries from user questions:
 ### 2. `response_generator.py`
 Converts raw database results into clear, conversational summaries:
 - **Analyst Persona**: Guides the model to output summaries focused on business metrics, avoiding database terminology and table names.
-- **Context Injection**: Truncates large query datasets to the top 20 rows before passing them to the model, preventing API errors from token bloat.
+- **Context Injection**: Ingests an enriched statistical profile (sums, means, unique counts) instead of raw datasets. This prevents token bloat and speeds up natural language generation.
 
 ---
 

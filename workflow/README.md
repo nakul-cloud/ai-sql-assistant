@@ -16,6 +16,7 @@ sequenceDiagram
     participant Retriever as retrieval/table_retriever.py
     participant LLM as llm/query_ai.py
     participant Executor as workflow/query_executor.py
+    participant Enricher as analysis/result_enricher.py
     participant NLGen as llm/response_generator.py
 
     User->>Streamlit: Ask Question
@@ -38,7 +39,10 @@ sequenceDiagram
         Orchestrator->>Executor: execute_sql_query(sql)
         Executor-->>Orchestrator: Data Records (JSON)
         
-        Orchestrator->>NLGen: generate_natural_language_response(query, sql, data)
+        Orchestrator->>Enricher: enrich_sql_result(data)
+        Enricher-->>Orchestrator: Enriched Statistical Profile
+        
+        Orchestrator->>NLGen: generate_natural_language_response(query, sql, profile)
         NLGen-->>Orchestrator: Conversational Insights
         
         Orchestrator->>Cache: store_in_query_cache(query, response, data)
@@ -79,8 +83,9 @@ Input: "Who is the manager of each department?"
  ├── 4. Builder ─────> Generates database schema context block
  ├── 5. SQL Gen ─────> Generates: "SELECT department_name, manager_name FROM dbo.csv_departments"
  ├── 6. Executor ────> Runs query, returns results: [{"department_name": "Sales", "manager_name": "Bob Smith"}]
- ├── 7. Insights ────> Summarizes: "The manager of the Sales department is Bob Smith..."
- └── 8. Cache store ─> Saves the query, results, and insights for future requests
+ ├── 7. Enricher ────> Builds statistical profile and reduces payload size
+ ├── 8. Insights ────> Summarizes: "The manager of the Sales department is Bob Smith..."
+ └── 9. Cache store ─> Saves the query, results, and insights for future requests
 ```
 
 ---

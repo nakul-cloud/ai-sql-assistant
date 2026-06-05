@@ -16,6 +16,12 @@ Builds schema context blocks for prompt generation:
   - Sample value lists to help the model write accurate queries.
 - **Prompt Grounding**: Formats the schema context to guide the LLM's query generation, preventing table/column hallucinations.
 
+### 2. `result_enricher.py`
+Provides the semantic enrichment layer for SQL execution results:
+- **`enrich_sql_result()`**: Analyzes raw SQL execution records using Pandas.
+- **Statistical Summaries**: Generates lightweight profiles containing sums, means, minimums, maximums for numbers, and unique/top values for categorical data.
+- **Payload Optimization**: Shrinks massive query results (e.g., 1000+ rows) down to a tiny, token-efficient metadata summary and a 5-row sample. This prevents LLM context overload and ensures lightning-fast natural language responses.
+
 ---
 
 ## Generated Prompt Context Format
