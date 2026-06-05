@@ -109,7 +109,7 @@ Response:"""
         }
 
 
-def process_user_query(user_query: str) -> Dict[str, Any]:
+def process_user_query(user_query: str, focus_tables: list = None) -> Dict[str, Any]:
     """
     Unified query processing pipeline.
     Routes the query and performs caching, retrieval, generation, and execution as appropriate.
@@ -143,8 +143,9 @@ def process_user_query(user_query: str) -> Dict[str, Any]:
             "nl_response": cached_result.get("nl_response")
         }
         
-    # Cache Miss -> Hybrid Retrieval
-    focus_tables = retrieve_relevant_tables(user_query, top_k=2)
+    # Cache Miss -> Hybrid Retrieval (only retrieve if not explicitly provided)
+    if not focus_tables:
+        focus_tables = retrieve_relevant_tables(user_query, top_k=2)
     logger.info(f"Retrieved tables for context: {focus_tables}")
     
     # Generate Schema Context

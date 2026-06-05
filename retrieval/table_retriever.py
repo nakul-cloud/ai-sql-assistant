@@ -79,21 +79,28 @@ def retrieve_relevant_tables(user_query: str, top_k: int = 3) -> list[str]:
             limit=top_k * 3
         )
         
-        # 3. Deduplicate tables while preserving ranked order
+        # 3. Print retrieval details and scores to terminal
+        print(f"\n[RAG] Retrieval details for: '{user_query}'")
+        print("-" * 80)
         seen = set()
         tables = []
-        for point in results.points:
-            payload = point.payload
-            if not payload or "table_name" not in payload:
-                continue
-            t = payload["table_name"]
-            if t not in seen:
-                seen.add(t)
-                tables.append(t)
-            if len(tables) == top_k:
-                break
-                
-        return tables
+        for rank, point in enumerate(results.points, 1):
+            payload = point.payload or {}
+            score = point.score or 0.0
+            table = payload.get("table_name", "Unknown")
+            chunk_type = payload.get("chunk_type", "Unknown")
+            text_snippet = payload.get("text", "").replace("\n", " ")[:120]
+            print(f"Rank {rank:02d} | Score: {score:.4f} | Table: {table:<25} | Type: {chunk_type:<10} | Snippet: {text_snippet}...")
+            
+            if table not in seen and table != "Unknown":
+                seen.add(table)
+                tables.append(table)
+        print("-" * 80)
+        
+        # Limit to requested top_k tables
+        selected_tables = tables[:top_k]
+        print(f"[RAG] Selected top {top_k} tables for context: {selected_tables}\n")
+        return selected_tables
         
     except Exception as e:
         print(f"  [WARNING] Table retrieval failed: {e}. Falling back to empty table list.")

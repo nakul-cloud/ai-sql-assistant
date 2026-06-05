@@ -27,6 +27,10 @@ load_dotenv()
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
 
+# Limit CPU threads for PyTorch to avoid Windows scheduling contention
+import torch
+torch.set_num_threads(4)
+
 # Import early to avoid Windows C-level conflicts with networking libs
 from FlagEmbedding import BGEM3FlagModel
 
@@ -52,9 +56,12 @@ def get_model():
         EMBEDDING_MODEL,
         use_fp16=True,      # half-precision for speed + lower memory
     )
+    
+    # Warm up the PyTorch compilation and thread pool for CPU execution
+    _model.encode(["warmup"], return_dense=True, return_sparse=True, return_colbert_vecs=False)
 
     elapsed = time.time() - start
-    print(f"[OK] Model loaded in {elapsed:.1f}s")
+    print(f"[OK] Model loaded and warmed up in {elapsed:.1f}s")
 
     return _model
 
