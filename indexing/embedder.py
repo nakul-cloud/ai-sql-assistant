@@ -27,6 +27,9 @@ load_dotenv()
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
 
+# Import early to avoid Windows C-level conflicts with networking libs
+from FlagEmbedding import BGEM3FlagModel
+
 # ── Singleton model ──────────────────────────────────────────────────
 _model = None
 
@@ -42,9 +45,7 @@ def get_model():
     if _model is not None:
         return _model
 
-    from FlagEmbedding import BGEM3FlagModel
-
-    print(f"🔄 Loading embedding model: {EMBEDDING_MODEL} ...")
+    print(f"[INFO] Loading embedding model: {EMBEDDING_MODEL} ...")
     start = time.time()
 
     _model = BGEM3FlagModel(
@@ -53,7 +54,7 @@ def get_model():
     )
 
     elapsed = time.time() - start
-    print(f"✅ Model loaded in {elapsed:.1f}s")
+    print(f"[OK] Model loaded in {elapsed:.1f}s")
 
     return _model
 
@@ -115,10 +116,10 @@ def embed_texts(texts: list[str]) -> list[dict]:
 
 # ── Standalone test ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n🧠 Testing BAAI/bge-m3 embedder...\n")
+    print("\n--- Testing BAAI/bge-m3 embedder ---\n")
 
     # Test 1: Single text embedding
-    print("── Test 1: Single text embedding ──")
+    print("--- Test 1: Single text embedding ---")
     test_text = "Show me all employees in the Engineering department"
     start = time.time()
     result = embed_text(test_text)
@@ -136,10 +137,10 @@ if __name__ == "__main__":
     assert len(dense) == EMBEDDING_DIMENSION, (
         f"Expected {EMBEDDING_DIMENSION}-dim, got {len(dense)}-dim"
     )
-    print(f"  ✅ Dense dimension correct ({EMBEDDING_DIMENSION})")
+    print(f"  [OK] Dense dimension correct ({EMBEDDING_DIMENSION})")
 
     # Test 2: Batch embedding
-    print("\n── Test 2: Batch embedding ──")
+    print("\n--- Test 2: Batch embedding ---")
     batch_texts = [
         "What are the total sales by region?",
         "List all tickets assigned to Billy George",
@@ -153,10 +154,10 @@ if __name__ == "__main__":
     print(f"  Results    : {len(batch_results)} embeddings")
     print(f"  Time       : {elapsed:.3f}s")
     assert len(batch_results) == len(batch_texts)
-    print(f"  ✅ Batch count correct")
+    print(f"  [OK] Batch count correct")
 
     # Test 3: Similarity sanity check
-    print("\n── Test 3: Similarity sanity check ──")
+    print("\n--- Test 3: Similarity sanity check ---")
     import numpy as np
 
     def cosine_sim(a, b):
@@ -178,11 +179,11 @@ if __name__ == "__main__":
     print(f"    vs \"{different_text}\"  → {diff_score:.4f}")
 
     if sim_score > diff_score:
-        print(f"  ✅ Similar text scored higher (as expected)")
+        print(f"  [OK] Similar text scored higher (as expected)")
     else:
-        print(f"  ⚠️  Unexpected: different text scored higher")
+        print(f"  [WARNING] Unexpected: different text scored higher")
 
     print("\n" + "=" * 55)
-    print("  ✅  Embedder — all tests passed!")
+    print("  [OK] Embedder -- all tests passed!")
     print("=" * 55)
     sys.exit(0)

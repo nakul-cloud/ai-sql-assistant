@@ -34,8 +34,14 @@ CACHE_FILE = os.getenv("DESCRIPTION_CACHE_FILE", "indexing/description_cache.jso
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-# Configure Gemini client
-_gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+# Configure Gemini client (lazy load to avoid runtime library conflicts)
+_gemini_client = None
+
+def _get_gemini_client() -> genai.Client:
+    global _gemini_client
+    if _gemini_client is None:
+        _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    return _gemini_client
 
 
 def _compute_table_hash(table_meta: dict) -> str:
@@ -92,7 +98,8 @@ Row Count: {table_meta.get('row_count', 'unknown')}{sample_info}
 
 Description:"""
 
-    response = _gemini_client.models.generate_content(
+    client = _get_gemini_client()
+    response = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=prompt,
     )

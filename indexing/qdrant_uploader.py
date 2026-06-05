@@ -19,6 +19,9 @@ Usage:
     python -m indexing.qdrant_uploader
 """
 
+# Import embedder first to initialize PyTorch/OpenMP runtimes before networking client libraries load
+from indexing.embedder import embed_text, embed_texts
+
 import os
 import sys
 import time
@@ -39,8 +42,6 @@ from qdrant_client.models import (
     SparseVectorParams,
     VectorParams,
 )
-
-from indexing.embedder import embed_text, embed_texts
 
 load_dotenv()
 
@@ -91,7 +92,7 @@ def ensure_collection() -> None:
             )
         },
     )
-    print(f"  ✅ Created collection: {SCHEMA_COLLECTION}")
+    print(f"  [OK] Created collection: {SCHEMA_COLLECTION}")
     print(f"     Dense: {EMBEDDING_DIMENSION}-dim, Cosine")
     print(f"     Sparse: BM25 (auto-indexed)")
 
@@ -200,26 +201,26 @@ def get_collection_info() -> dict:
 
 # ── Standalone test ──────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n📤 Testing Qdrant uploader...\n")
+    print("\n--- Testing Qdrant uploader ---\n")
 
     # Test 0: Connection check
-    print("── Test 0: Qdrant connection ──")
+    print("--- Test 0: Qdrant connection ---")
     try:
         client = _get_client()
         collections = client.get_collections()
-        print(f"  ✅ Connected to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}")
+        print(f"  [OK] Connected to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}")
         print(f"  Collections: {[c.name for c in collections.collections]}")
     except Exception as e:
-        print(f"  ❌ Cannot connect to Qdrant: {e}")
+        print(f"  [FAIL] Cannot connect to Qdrant: {e}")
         print("  Is Docker running? Try: docker start qdrant")
         sys.exit(1)
 
     # Test 1: Ensure collection
-    print("\n── Test 1: Ensure collection ──")
+    print("\n--- Test 1: Ensure collection ---")
     ensure_collection()
 
     # Test 2: Upload test chunks
-    print("\n── Test 2: Upload test chunks ──")
+    print("\n--- Test 2: Upload test chunks ---")
     from indexing.chunk_builder import Chunk
 
     test_chunks = [
@@ -248,16 +249,16 @@ if __name__ == "__main__":
     print(f"  Time     : {elapsed:.2f}s")
 
     # Test 3: Check collection info
-    print("\n── Test 3: Collection info ──")
+    print("\n--- Test 3: Collection info ---")
     info = get_collection_info()
     print(f"  Exists   : {info['exists']}")
     print(f"  Points   : {info['points_count']}")
     print(f"  Status   : {info.get('status', 'N/A')}")
     assert info["points_count"] >= 2, f"Expected >= 2 points, got {info['points_count']}"
-    print(f"  ✅ Points in collection")
+    print(f"  [OK] Points in collection")
 
     # Test 4: Delete test chunks
-    print("\n── Test 4: Delete test table chunks ──")
+    print("\n--- Test 4: Delete test table chunks ---")
     deleted = delete_table_chunks("dbo.TestOrders")
     print(f"  Deleted  : {deleted} points for 'dbo.TestOrders'")
 
@@ -266,9 +267,9 @@ if __name__ == "__main__":
     _t.sleep(0.5)  # Brief wait for Qdrant to process
     info = get_collection_info()
     print(f"  Remaining: {info['points_count']} points")
-    print(f"  ✅ Cleanup complete")
+    print(f"  [OK] Cleanup complete")
 
     print("\n" + "=" * 55)
-    print("  ✅  Qdrant uploader — all tests passed!")
+    print("  [OK] Qdrant uploader -- all tests passed!")
     print("=" * 55)
     sys.exit(0)
