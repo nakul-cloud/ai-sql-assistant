@@ -161,8 +161,8 @@ def upload_df_to_sql(
         row_count = len(df)
         col_count = len(df.columns)
         return True, (
-            f"Uploaded {row_count} rows × {col_count} columns "
-            f"→ [{schema}].[{table_name}]"
+            f"Uploaded {row_count} rows x {col_count} columns "
+            f"to [{schema}].[{table_name}]"
         )
 
     except Exception as e:
