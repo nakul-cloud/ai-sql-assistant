@@ -19,7 +19,7 @@ from workflow.query_executor import execute_sql_query
 from llm.response_generator import generate_natural_language_response
 from analysis.result_enricher import enrich_sql_result
 from database.schema_manager import fetch_database_metadata
-from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL
+from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL, generate_content_with_retry
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -38,7 +38,8 @@ User Message: "{user_query}"
 Response:"""
     try:
         client = _get_gemini_client()
-        response = client.models.generate_content(
+        response = generate_content_with_retry(
+            client,
             model=GEMINI_MODEL,
             contents=prompt,
         )
@@ -89,7 +90,8 @@ User Question: "{user_query}"
 Response:"""
 
         client = _get_gemini_client()
-        response = client.models.generate_content(
+        response = generate_content_with_retry(
+            client,
             model=GEMINI_MODEL,
             contents=prompt,
         )
