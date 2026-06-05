@@ -325,21 +325,21 @@ python -m indexing.schema_extractor    # Schema extraction + formatting
 | 3 | `database/csv_uploader.py` | ✅ Done |
 | 4 | `indexing/embedder.py` | ✅ Done |
 | 5 | `indexing/schema_extractor.py` | ✅ Done |
-| 6 | `indexing/semantic_description.py` | ⬜ Next |
-| 7 | `indexing/chunk_builder.py` | ⬜ |
-| 8 | `indexing/qdrant_uploader.py` | ⬜ |
-| 9 | `indexing/index_manager.py` | ⬜ |
-| 10 | `retrieval/query_router.py` | ⬜ |
-| 11 | `retrieval/table_retriever.py` | ⬜ |
-| 12 | `retrieval/query_cache.py` | ⬜ |
-| 13 | `analysis/schema_context.py` | ⬜ |
-| 14 | `llm/query_ai.py` | ⬜ |
-| 15 | `llm/response_generator.py` | ⬜ |
-| 16 | `workflow/process_query.py` | ⬜ |
-| 17 | `workflow/query_executor.py` | ⬜ |
-| 18 | `pages/chat_page.py` | ⬜ |
-| 19 | `pages/upload_page.py` | ⬜ |
-| 20 | `app.py` | ⬜ |
+| 6 | `indexing/semantic_description.py` | ✅ Done |
+| 7 | `indexing/chunk_builder.py` | ✅ Done |
+| 8 | `indexing/qdrant_uploader.py` | ✅ Done |
+| 9 | `indexing/index_manager.py` | ✅ Done |
+| 10 | `retrieval/query_router.py` | ✅ Done |
+| 11 | `retrieval/table_retriever.py` | ✅ Done |
+| 12 | `retrieval/query_cache.py` | ✅ Done |
+| 13 | `analysis/schema_context.py` | ✅ Done |
+| 14 | `llm/query_ai.py` | ✅ Done |
+| 15 | `llm/response_generator.py` | ✅ Done |
+| 16 | `workflow/process_query.py` | ✅ Done |
+| 17 | `workflow/query_executor.py` | ✅ Done |
+| 18 | `pages/chat_page.py` | ✅ Done |
+| 19 | `pages/upload_page.py` | ✅ Done |
+| 20 | `app.py` | ✅ Done |
 
 ---
 
