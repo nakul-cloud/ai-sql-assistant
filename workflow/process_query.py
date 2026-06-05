@@ -17,6 +17,7 @@ from analysis.schema_context import generate_schema_context
 from llm.query_ai import generate_sql_query
 from workflow.query_executor import execute_sql_query
 from llm.response_generator import generate_natural_language_response
+from analysis.result_enricher import enrich_sql_result
 from database.schema_manager import fetch_database_metadata
 from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL
 
@@ -178,8 +179,11 @@ def process_user_query(user_query: str, focus_tables: list = None) -> Dict[str, 
         
     query_result = exec_res["result"]
     
-    # Generate Natural Language Insights
-    nl_res = generate_natural_language_response(user_query, sql_query, query_result)
+    # Enrich the result for the LLM
+    enriched_result = enrich_sql_result(query_result)
+    
+    # Generate Natural Language Insights using the enriched profile
+    nl_res = generate_natural_language_response(user_query, sql_query, enriched_result)
     nl_response = nl_res["response_text"]
     
     # Store result in cache
