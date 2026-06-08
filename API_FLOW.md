@@ -178,6 +178,51 @@ DB_DATABASE=ai_sql_db
 
 ---
 
+## 📊 Combined Prompt Structure & Token Budget
+
+To maximize efficiency and minimize cost, the orchestration layer packages retrieved data and system instructions into highly optimized prompts. Here is how they are formatted and how many tokens they consume.
+
+### 1. Anatomy of the SQL Generation Prompt (The "One Prompt" Package)
+When generating SQL, the assistant combines **System Rules**, **Database Schema Metadata**, and the **User Question** into a single prompt payload:
+
+```markdown
+┌────────────────────────────────────────────────────────────────────────┐
+│ SYSTEM INSTRUCTIONS:                                                   │
+│ You are a T-SQL expert. Generate ONLY valid, clean SELECT queries.     │
+│ Do not explain anything. Use TOP instead of LIMIT.                     │
+├────────────────────────────────────────────────────────────────────────┤
+│ DATABASE SCHEMA CONTEXT (Retrieved from Qdrant/Fast-cache):            │
+│ Table: dbo.csv_employees                                               │
+│ Columns:                                                               │
+│   - employee_id (int, NOT NULL) [PK]                                   │
+│   - employee_name (varchar(100), NULL)                                 │
+│   - salary (decimal(18,2), NULL)                                       │
+│ Sample Values:                                                         │
+│   - salary: [85000.00, 120000.00, 64000.00]                            │
+├────────────────────────────────────────────────────────────────────────┤
+│ USER QUERY:                                                            │
+│ "Who are the 3 highest paid employees?"                                │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 2. Token Budget & API Request Estimation
+
+Here is a simple breakdown of the token footprint and network API requests made under different conditions:
+
+| Query Type / Scenario | API Requests to Groq | Avg. Input Tokens | Avg. Output Tokens | Total Time |
+| :--- | :---: | :---: | :---: | :---: |
+| **Scenario A: Semantic Cache Hit** | **0** | `0` | `0` | **< 5ms** |
+| **Scenario B: Standalone Query (Keyword Match)** | **2** <br> *(1 SQL Gen + 1 NL Resp)* | `1,500` | `150` | **~500ms** |
+| **Scenario C: Ambiguous Follow-Up (Full Pipeline)** | **3** <br> *(1 Context + 1 SQL Gen + 1 NL Resp)* | `2,500` | `200` | **~750ms** |
+
+#### Why is this token usage so low?
+1. **Incremental Context Only:** The system does not feed raw database tables to the LLM. It only passes **schema signatures** (column structures) and a few sample cell values.
+2. **Aggregated Results:** Before passing query results back to the LLM for natural language response generation, the `result_enricher` summarizes large datasets into statistical profiles (counts, averages, sums), keeping response tokens small.
+
+---
+
 ## 💡 Best Practices & Latency Optimization
 
 > [!TIP]
