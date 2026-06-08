@@ -232,3 +232,10 @@ Here is a simple breakdown of the token footprint and network API requests made 
 > [!NOTE]
 > **No Direct Internet Calls**
 > Embedding generation (`BAAI/bge-m3`) runs 100% locally on your machine. Network latency is only incurred on the final Groq API completion requests, which typically take **200ms - 400ms**.
+
+> [!IMPORTANT]
+> **Autonomous LangChain Agent Fallback**
+> If a generated SQL query fails to execute on SQL Server (e.g. because of a schema signature update, column drift, or complex query structure), the system automatically triggers a **self-healing fallback**:
+> 1. It initiates the **LangChain SQL Agent** (`llm/langchain_agent.py`) using `ChatGroq` and `SQLDatabase`.
+> 2. The agent uses native tool-calling (`agent_type="tool-calling"`) to bind database tools directly to `ChatGroq`, executing a multi-step loop to inspect columns, correct the SQL query, and recover the dataset autonomously.
+> 3. This ensures the user receives a valid response even when traditional deterministic generation fails.

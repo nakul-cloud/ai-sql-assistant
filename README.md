@@ -20,7 +20,7 @@
 Business users type questions like **"Show me the top 10 customers by revenue last quarter"** and the system:
 
 1. Finds the right tables using hybrid semantic search
-2. Generates a safe, validated SQL query via Gemini
+2. Generates a safe, validated SQL query via LangChain and Groq
 3. Executes it against SQL Server
 4. Returns results with a natural language summary
 
@@ -38,9 +38,10 @@ No SQL knowledge required. No manual table selection. Works across 100+ tables.
 | **Hybrid Search** | Qdrant RRF Fusion | Merges dense + sparse results |
 | **Query Cache** | Qdrant cosine similarity | Threshold: 0.92 |
 | **Description Cache** | Local JSON file | Hash-keyed by schema signature |
-| **Intent Router** | Regex + Groq Llama 3 | Regex first, LLM only if ambiguous |
-| **SQL Generation** | Groq Llama 3 (8B) | Natural language to SQL |
-| **NL Response** | Groq Llama 3 (8B) | Results to human-readable answer |
+| **Intent Router** | Regex + LangChain ChatGroq | Regex first, LCEL chain if ambiguous |
+| **SQL Generation** | LangChain LCEL + ChatGroq | Structured SQL generation chain |
+| **Autonomous Agent** | LangChain SQL Agent | Tool-calling fallback for schema correction and query repair |
+| **NL Response** | LangChain LCEL + ChatGroq | Summarized insights chain |
 | **Scheduler** | APScheduler | Nightly full re-index |
 | **DB Driver** | SQLAlchemy + pyodbc | Connection pooling, Windows Auth |
 
@@ -110,16 +111,19 @@ flowchart TD
     QC -->|"cache MISS"| HR["Hybrid Retriever\nRRF Fusion"]
 
     HR --> SCB["Schema Context Builder\ntop 3 tables"]
-    SCB --> SQLG["SQL Generator\nGroq Llama 3"]
+    SCB --> SQLG["SQL Generator\nLangChain ChatGroq"]
     SQLG --> VAL["SQL Validator\nSELECT-only guard"]
     VAL --> EXEC["SQL Server\nQuery Execution"]
-    EXEC --> NL["NL Response Generator\nGroq Llama 3"]
+    EXEC -->|"Success"| NL["NL Response Generator\nLangChain ChatGroq"]
+    EXEC -->|"Failure"| AGENT["Autonomous SQL Agent\nllama-3.3-70b-versatile"]
     NL --> STORE["Store in Query Cache"]
+    AGENT --> STORE
     STORE --> ANS2["User sees Answer + Table"]
 
     style U fill:#2563eb,color:#fff
     style HR fill:#9333ea,color:#fff
     style SQLG fill:#4285f4,color:#fff
+    style AGENT fill:#f59e0b,color:#000
     style ANS1 fill:#16a34a,color:#fff
     style ANS2 fill:#16a34a,color:#fff
 ```
@@ -263,6 +267,11 @@ python -m database.schema_manager      # Extract schema metadata
 python -m database.csv_uploader        # CSV upload round-trip
 python -m indexing.embedder            # BAAI/bge-m3 embedding test
 python -m indexing.schema_extractor    # Schema extraction + formatting
+python -m llm.llm_client               # Test LangChain client connection
+python -m llm.query_ai                 # Test SQL query generator chain
+python -m llm.response_generator       # Test NL answer generator chain
+python -m retrieval.query_router       # Test router intent classifier chain
+python -m llm.langchain_agent          # Test autonomous SQL tool-calling agent
 ```
 
 ---
@@ -292,11 +301,13 @@ python -m indexing.schema_extractor    # Schema extraction + formatting
 1. **Query cache check** — cosine similarity > 0.92 returns cached answer instantly
 2. **Hybrid retrieval** — RRF fusion of dense + sparse search, returns top 3 tables
 3. **Schema context** — builds a detailed prompt with column info + sample values
-4. **SQL generation** — Groq Llama 3 produces a SELECT query
+4. **SQL generation** — LangChain ChatGroq LCEL chain produces a SELECT query
 5. **Validation** — ensures only SELECT statements pass through
-6. **Execution** — runs against SQL Server, returns results
+6. **Execution & Fallback**:
+   - **Standard Path**: Runs the SQL query on SQL Server using SQLAlchemy connection pools.
+   - **Fallback Path**: If the SQL execution fails due to schema changes or database syntax errors, the **Autonomous LangChain SQL Agent** (`llama-3.3-70b-versatile`) is triggered. The agent queries schema info, fixes syntax issues, and runs the repaired query autonomously.
 7. **Semantic Enrichment** — analyzes rows to build lightweight statistical profiles
-8. **NL response** — Groq Llama 3 summarizes enriched results in plain English
+8. **NL response** — LangChain ChatGroq LCEL chain summarizes enriched results in plain English
 9. **Cache store** — saves the query + response for future cache hits
 
 ---
