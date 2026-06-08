@@ -79,3 +79,56 @@ Test the components from the project root:
 # Test autonomous tool-calling SQL agent
 .venv\Scripts\python.exe -m llm.langchain_agent
 ```
+
+---
+
+## 🔗 LangChain Expression Language (LCEL)
+
+LCEL is a simple way to glue different AI components together using the pipe operator (`|`), just like unix terminal commands (`cat file.txt | grep "error"`).
+
+Think of LCEL as a **factory assembly line** where data enters on one side, passes through different stations, and comes out fully processed on the other side.
+
+### 🧱 The 3 Core Blocks of an LCEL Chain
+In most chains, you connect three basic elements:
+* **Prompt Template**: The instructions for the LLM (tells it what to do).
+* **LLM (Model)**: The brain that processes the prompt (like Groq Llama 3).
+* **Output Parser**: Cleans up the LLM's response (e.g., converts the raw AI response into a clean text string).
+
+In Python, you chain them together using the pipe `|` symbol:
+```python
+chain = Prompt | LLM | OutputParser
+```
+
+### 🛠️ How We Use LCEL in This Project
+We use LCEL to handle every text-processing pipeline in the codebase. Here are three real examples:
+
+#### 1. Generating SQL Queries ([llm/query_ai.py](file:///d:/ai-sql-assistant/llm/query_ai.py))
+This chain takes your question and table schemas and outputs clean SQL code:
+```python
+_sql_chain = SQL_PROMPT | get_llm(temperature=0.0) | StrOutputParser()
+```
+* **How data flows**:
+  1. `SQL_PROMPT` fills in your question and the schema context.
+  2. The filled-in text is piped into the LLM (configured with `temperature=0.0` for precise, deterministic SQL).
+  3. The raw response is piped into `StrOutputParser()` to strip away metadata and return a clean SQL string.
+
+#### 2. Writing Conversational Summaries ([llm/response_generator.py](file:///d:/ai-sql-assistant/llm/response_generator.py))
+This chain takes the database records and translates them into business answers:
+```python
+_nl_chain = NL_PROMPT | get_llm(temperature=0.3) | StrOutputParser()
+```
+* **How data flows**:
+  1. `NL_PROMPT` receives the query, total row count, and statistical profile.
+  2. It pipes it to the LLM (configured with `temperature=0.3` to allow for clean, natural-sounding sentences).
+  3. `StrOutputParser` extracts the final natural language answer.
+
+#### 3. Contextualizing Follow-up Questions ([workflow/process_query.py](file:///d:/ai-sql-assistant/workflow/process_query.py))
+This chain reads chat history to rephrase ambiguous inputs:
+```python
+_contextualize_chain = CONTEXTUALIZE_PROMPT | get_llm(temperature=0.0) | StrOutputParser()
+```
+
+### 🌟 Why Use LCEL? (The Benefits)
+* **Automatic Streaming**: If you want the chat response to stream word-by-word on the screen, LCEL handles it out-of-the-box using `.stream()` instead of `.invoke()`.
+* **Less Boilerplate**: You don't have to write code to extract text from deep nested JSON response objects (like `response.choices[0].message.content`). The output parser handles it automatically.
+* **Unified Interface**: Every LCEL chain uses the same standard functions (`.invoke()`, `.stream()`, `.batch()`), making the codebase clean and easy to maintain.
