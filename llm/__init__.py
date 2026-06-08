@@ -1,1 +1,1 @@
-# llm package — Gemini SQL generation and NL response
+# llm package — Groq SQL generation and NL response

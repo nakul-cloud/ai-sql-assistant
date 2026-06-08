@@ -112,32 +112,85 @@ Response:"""
         }
 
 
-def process_user_query(user_query: str, focus_tables: list = None) -> Dict[str, Any]:
+def contextualize_query(user_query: str, chat_history: list) -> str:
+    """
+    Contextualize the user's query based on recent chat history to handle follow-up questions.
+    """
+    if not chat_history:
+        return user_query
+
+    # Extract user/assistant turns
+    turns = []
+    # Only use the last 4 messages to keep it fast and prevent token bloat
+    for msg in chat_history[-4:]:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        content = msg["content"]
+        if len(content) > 500:
+            content = content[:500] + "..."
+        turns.append(f"{role}: {content}")
+        
+    history_str = "\n".join(turns)
+
+    prompt = f"""You are a conversational database query contextualization assistant.
+Given the following conversation history and the user's latest follow-up question, rephrase the question to be a self-contained, standalone query (in natural language) that contains all necessary context from the history.
+If the latest question is already completely standalone and needs no context, return it exactly as is.
+DO NOT answer the question. DO NOT write SQL. Return ONLY the self-contained question text.
+
+Conversation History:
+{history_str}
+
+Latest Follow-up Question: "{user_query}"
+Standalone Question:"""
+
+    try:
+        from llm.llm_client import generate_text
+        rephrased = generate_text(prompt)
+        rephrased_clean = rephrased.strip().strip('"\'')
+        if rephrased_clean:
+            logger.info(f"Rephrased user query: '{user_query}' -> '{rephrased_clean}'")
+            return rephrased_clean
+    except Exception as e:
+        logger.warning(f"Failed to contextualize query: {e}")
+    return user_query
+
+
+def process_user_query(user_query: str, focus_tables: list = None, chat_history: list = None) -> Dict[str, Any]:
     """
     Unified query processing pipeline.
     Routes the query and performs caching, retrieval, generation, and execution as appropriate.
+    Supports conversational query contextualization if chat_history is provided.
     """
-    logger.info(f"Processing query: '{user_query}'")
+    # 0. Contextualize user query using chat history
+    active_query = user_query
+    if chat_history:
+        active_query = contextualize_query(user_query, chat_history)
+        
+    logger.info(f"Processing query: '{active_query}' (Original: '{user_query}')")
     
     # 1. Determine Intent
-    intent = route_query(user_query)
+    intent = route_query(active_query)
     logger.info(f"Routed intent: {intent}")
     
     if intent == "CHAT":
-        return handle_chat_query(user_query)
+        res = handle_chat_query(active_query)
+        res["rephrased_query"] = active_query
+        return res
         
     elif intent == "SCHEMA_INFO":
-        return handle_schema_info_query(user_query)
+        res = handle_schema_info_query(active_query)
+        res["rephrased_query"] = active_query
+        return res
         
     # 2. SQL Query Execution Pipeline
     # Check cache first
-    cached_result = check_query_cache(user_query)
+    cached_result = check_query_cache(active_query)
     if cached_result:
         return {
             "success": True,
             "intent": "SQL_QUERY",
             "cache_hit": True,
             "generated_sql": "Served from Cache",
+            "rephrased_query": active_query,
             "query_result": {
                 "columns": cached_result.get("columns", []),
                 "rows": cached_result.get("rows", []),
@@ -148,19 +201,20 @@ def process_user_query(user_query: str, focus_tables: list = None) -> Dict[str, 
         
     # Cache Miss -> Hybrid Retrieval (only retrieve if not explicitly provided)
     if not focus_tables:
-        focus_tables = retrieve_relevant_tables(user_query, top_k=2)
+        focus_tables = retrieve_relevant_tables(active_query, top_k=2)
     logger.info(f"Retrieved tables for context: {focus_tables}")
     
     # Generate Schema Context
-    schema_context = generate_schema_context(user_query, focus_tables=focus_tables)
+    schema_context = generate_schema_context(active_query, focus_tables=focus_tables)
     
     # Generate SQL
-    sql_res = generate_sql_query(user_query, schema_context)
+    sql_res = generate_sql_query(active_query, schema_context)
     if not sql_res["success"]:
         return {
             "success": False,
             "intent": "SQL_QUERY",
             "error_type": "SQL_GENERATION_FAILED",
+            "rephrased_query": active_query,
             "error": sql_res.get("error", "Failed to generate SQL query."),
             "nl_response": "I was unable to generate a valid SQL query for your request."
         }
@@ -176,6 +230,7 @@ def process_user_query(user_query: str, focus_tables: list = None) -> Dict[str, 
             "error_type": exec_res.get("error_type", "SQL_EXECUTION_FAILED"),
             "error": exec_res.get("error", "Database execution error."),
             "generated_sql": sql_query,
+            "rephrased_query": active_query,
             "nl_response": "The generated SQL query failed to execute against the database."
         }
         
@@ -185,11 +240,11 @@ def process_user_query(user_query: str, focus_tables: list = None) -> Dict[str, 
     enriched_result = enrich_sql_result(query_result)
     
     # Generate Natural Language Insights using the enriched profile
-    nl_res = generate_natural_language_response(user_query, sql_query, enriched_result)
+    nl_res = generate_natural_language_response(active_query, sql_query, enriched_result)
     nl_response = nl_res["response_text"]
     
     # Store result in cache
-    store_in_query_cache(user_query, nl_response, query_result)
+    store_in_query_cache(active_query, nl_response, query_result)
     
     return {
         "success": True,
@@ -197,6 +252,7 @@ def process_user_query(user_query: str, focus_tables: list = None) -> Dict[str, 
         "cache_hit": False,
         "generated_sql": sql_query,
         "query_result": query_result,
+        "rephrased_query": active_query,
         "nl_response": nl_response
     }
 
