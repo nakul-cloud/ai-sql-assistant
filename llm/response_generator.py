@@ -2,7 +2,7 @@
 llm/response_generator.py
 ─────────────────────────
 Generates a conversational natural language response summarizing SQL execution results
-using the new Google GenAI SDK.
+using Groq (llama-3.1-8b-instant).
 """
 
 import json
@@ -10,7 +10,7 @@ import logging
 from typing import Dict, Any
 
 from dotenv import load_dotenv
-from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL, generate_content_with_retry
+from indexing.semantic_description import generate_content_with_retry
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def generate_natural_language_response(
         # The query_result is now an enriched profile (total_rows, column_stats, data_sample)
         formatted_result = json.dumps(query_result, indent=2, default=str)
 
-        client = _get_gemini_client()
+        client = None
         prompt = RESPONSE_PROMPT.format(
             user_query=user_query,
             sql_query=sql_query,
@@ -71,7 +71,7 @@ def generate_natural_language_response(
 
         response = generate_content_with_retry(
             client,
-            model=GEMINI_MODEL,
+            model=None,
             contents=prompt,
         )
 

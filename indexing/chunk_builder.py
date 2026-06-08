@@ -87,7 +87,7 @@ def _build_semantic_chunk(table_meta: dict) -> Chunk:
     """
     table_name = table_meta["table_name"]
 
-    # Get description (from cache or Gemini)
+    # Get description (from cache or LLM)
     description = get_semantic_description(table_meta)
 
     text = f"Table: {table_name}\n{description}"

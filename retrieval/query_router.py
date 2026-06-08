@@ -6,7 +6,7 @@ Routes user queries into three distinct intents:
   2. SQL_QUERY   → Analytical questions requiring SQL Server queries
   3. SCHEMA_INFO → Questions about database structure, tables, and columns
 
-Uses a hybrid regex pre-check + Gemini intent classifier.
+Uses a hybrid regex pre-check + LLM intent classifier (Groq).
 
 Usage:
     python -m retrieval.query_router
@@ -17,11 +17,7 @@ import re
 import sys
 from dotenv import load_dotenv
 
-from indexing.semantic_description import _get_gemini_client, generate_content_with_retry
-
-load_dotenv()
-
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+from indexing.semantic_description import generate_content_with_retry
 
 # Regex patterns for direct routing
 CHAT_PATTERNS = [
@@ -71,7 +67,7 @@ def pre_check_intent(user_query: str) -> str | None:
 
 def llm_classify_intent(user_query: str) -> str:
     """
-    Use Gemini Flash to classify ambiguous queries.
+    Use the LLM to classify ambiguous queries.
     """
     prompt = f"""
     You are an intent classifier for a database assistant.
@@ -87,10 +83,10 @@ def llm_classify_intent(user_query: str) -> str:
     Class:
     """
     try:
-        client = _get_gemini_client()
+        client = None
         response = generate_content_with_retry(
             client,
-            model=GEMINI_MODEL,
+            model=None,
             contents=prompt,
         )
         intent = response.text.strip().upper()
@@ -115,7 +111,7 @@ def route_query(user_query: str) -> str:
     if intent:
         return intent
 
-    # 2. Use Gemini if ambiguous (~300ms)
+    # 2. Use LLM if ambiguous (~300ms)
     return llm_classify_intent(user_query)
 
 

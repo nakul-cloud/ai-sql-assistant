@@ -95,18 +95,18 @@ db_connected, db_msg = test_db_connection()
 metadata_list = fetch_database_metadata() if db_connected else []
 table_count = len(metadata_list)
 
-api_key = os.getenv("GEMINI_API_KEY")
-gemini_ready = bool(api_key and api_key != "your_gemini_api_key_here")
+api_key = os.getenv("GROQ_API_KEY")
+groq_ready = bool(api_key and api_key != "your_groq_api_key_here")
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-    if gemini_ready:
+    if groq_ready:
         st.markdown('<div class="metric-value status-connected">Active</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div class="metric-value status-disconnected">Missing Key</div>', unsafe_allow_html=True)
-    st.markdown('<div class="metric-label">Gemini AI Status</div>', unsafe_allow_html=True)
+    st.markdown('<div class="metric-label">Groq AI Status</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:

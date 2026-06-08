@@ -19,7 +19,7 @@ from workflow.query_executor import execute_sql_query
 from llm.response_generator import generate_natural_language_response
 from analysis.result_enricher import enrich_sql_result
 from database.schema_manager import fetch_database_metadata
-from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL, generate_content_with_retry
+from indexing.semantic_description import generate_content_with_retry
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def handle_chat_query(user_query: str) -> Dict[str, Any]:
     """
-    Handle general chat and conversational queries using Gemini Flash.
+    Handle general chat and conversational queries using Groq.
     """
     logger.info(f"Handling CHAT query: '{user_query}'")
     prompt = f"""You are a helpful and professional Enterprise AI SQL Analytics Assistant.
@@ -37,10 +37,10 @@ Mention that you can answer analytical queries about employees, departments, and
 User Message: "{user_query}"
 Response:"""
     try:
-        client = _get_gemini_client()
+        client = None
         response = generate_content_with_retry(
             client,
-            model=GEMINI_MODEL,
+            model=None,
             contents=prompt,
         )
         return {
@@ -89,10 +89,10 @@ Database Metadata:
 User Question: "{user_query}"
 Response:"""
 
-        client = _get_gemini_client()
+        client = None
         response = generate_content_with_retry(
             client,
-            model=GEMINI_MODEL,
+            model=None,
             contents=prompt,
         )
         return {

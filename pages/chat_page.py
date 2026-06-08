@@ -108,23 +108,20 @@ if user_input:
                 raw_error = res.get("error", "Query processing failed.")
                 
                 # Friendly error messages based on error type
-                if "429" in raw_error or "RESOURCE_EXHAUSTED" in raw_error:
+                if "429" in raw_error or "rate_limit_exceeded" in raw_error.lower():
                     err_msg = (
-                        "⚠️ **API Quota Exhausted**\n\n"
-                        "Your Gemini API free-tier quota has been used up.\n\n"
+                        "⚠️ **API Quota Exhausted / Rate Limit Exceeded**\n\n"
+                        "Your Groq API rate limits have been hit.\n\n"
                         "**Quick fix options:**\n"
-                        "1. Get a new API key from [aistudio.google.com](https://aistudio.google.com) "
-                        "(use a different Google account) and update `GEMINI_API_KEY` in your `.env` file.\n"
-                        "2. Enable billing on your Google Cloud project to remove the limit.\n\n"
-                        "The model `gemini-2.0-flash` gives **1,500 free calls/day** — "
-                        "make sure the key was created in [AI Studio](https://aistudio.google.com), not Google Cloud Console."
+                        "1. Wait a minute and try again (llama-3.1-8b-instant has generous free-tier limits, but you can hit requests-per-minute limits).\n"
+                        "2. Get a new API key from [console.groq.com](https://console.groq.com) and update `GROQ_API_KEY` in your `.env` file.\n"
                     )
-                elif "401" in raw_error or "UNAUTHENTICATED" in raw_error:
+                elif "401" in raw_error or "invalid_api_key" in raw_error.lower() or "authentication" in raw_error.lower():
                     err_msg = (
                         "🔑 **Invalid API Key**\n\n"
-                        "Your `GEMINI_API_KEY` is invalid or expired.\n"
-                        "Please go to [aistudio.google.com](https://aistudio.google.com), "
-                        "generate a new key, and update it in your `.env` file."
+                        "Your `GROQ_API_KEY` is invalid or expired.\n"
+                        "Please go to [console.groq.com](https://console.groq.com), "
+                        "generate a new API key, and update it in your `.env` file."
                     )
                 else:
                     err_msg = f"❌ **Error:** {raw_error}"

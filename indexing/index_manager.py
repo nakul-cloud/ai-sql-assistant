@@ -6,7 +6,7 @@ The master orchestrator for the database schema indexing pipeline.
 Coordinates:
   1. schema_manager     → Pull raw metadata from SQL Server
   2. schema_extractor   → Format it for indexing
-  3. chunk_builder      → Build structural + semantic chunks (using Gemini descriptions)
+  3. chunk_builder      → Build structural + semantic chunks (using LLM descriptions)
   4. qdrant_uploader    → Upsert chunks to Qdrant (with automatic deletion of old table chunks)
 
 Provides:

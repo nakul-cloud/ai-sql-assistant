@@ -1,7 +1,7 @@
 """
 llm/query_ai.py
 ───────────────
-Production-grade AI SQL generation engine using the Google GenAI SDK.
+Production-grade AI SQL generation engine using Groq (llama-3.1-8b-instant).
 """
 
 import os
@@ -9,10 +9,9 @@ import re
 import logging
 from typing import Dict, Any
 
-from google import genai
 from dotenv import load_dotenv
 
-from indexing.semantic_description import _get_gemini_client, GEMINI_MODEL, generate_content_with_retry
+from indexing.semantic_description import generate_content_with_retry
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -31,6 +30,7 @@ STRICT RULES:
 6. Use TOP instead of LIMIT for limiting rows.
 7. Avoid SELECT *. Explicitly list the columns required.
 8. When filtering by specific text/names, use LIKE '%value%' and search across relevant string columns.
+9. If combining TOP and DISTINCT, you MUST write DISTINCT before TOP (e.g. SELECT DISTINCT TOP 10 ... instead of SELECT TOP 10 DISTINCT ...).
 
 Database Schema Context:
 ------------------------
@@ -46,6 +46,7 @@ Generate a valid Microsoft SQL Server query:"""
 def clean_sql_query(sql_text: str) -> str:
     """
     Cleans LLM SQL response by removing markdown blocks and whitespace.
+    Also auto-corrects SQL Server specific syntax errors like TOP DISTINCT.
     """
     if not sql_text:
         return ""
@@ -54,6 +55,15 @@ def clean_sql_query(sql_text: str) -> str:
     # Remove markdown code blocks if present
     cleaned = re.sub(r"```sql", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"```", "", cleaned)
+    
+    # Auto-correct TOP DISTINCT syntax error for MS SQL Server
+    # e.g., "SELECT TOP 100 DISTINCT col" -> "SELECT DISTINCT TOP 100 col"
+    cleaned = re.sub(
+        r"\bSELECT\s+TOP\s+(\d+|\(\d+\))\s+DISTINCT\b",
+        r"SELECT DISTINCT TOP \1",
+        cleaned,
+        flags=re.IGNORECASE
+    )
     return cleaned.strip()
 
 
@@ -102,7 +112,7 @@ def generate_sql_query(user_query: str, schema_context: str) -> Dict[str, Any]:
     logger.info(f"Generating SQL for query: '{user_query}'")
     
     try:
-        client = _get_gemini_client()
+        client = None
         prompt = SQL_GENERATION_PROMPT.format(
             schema_context=schema_context,
             user_query=user_query
@@ -110,7 +120,7 @@ def generate_sql_query(user_query: str, schema_context: str) -> Dict[str, Any]:
         
         response = generate_content_with_retry(
             client,
-            model=GEMINI_MODEL,
+            model=None,
             contents=prompt,
         )
         

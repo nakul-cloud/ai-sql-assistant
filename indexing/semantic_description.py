@@ -8,7 +8,7 @@ How caching works:
   - Each table's structure (name + columns + types) is hashed (SHA-256).
   - If the hash exists in the cache, the stored description is reused.
   - If the hash is missing (new table or schema changed), a fresh
-    Gemini API call is made and the result is cached.
+    LLM API call is made and the result is cached.
 
 Provides:
   • get_semantic_description(table_meta)  → cached or fresh description
@@ -24,26 +24,14 @@ import json
 import os
 import sys
 
-from google import genai
 from dotenv import load_dotenv
-from tenacity import retry, wait_exponential, stop_after_attempt
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
 import logging
 
 load_dotenv()
 
 # ── Config ───────────────────────────────────────────────────────────
 CACHE_FILE = os.getenv("DESCRIPTION_CACHE_FILE", "indexing/description_cache.json")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-
-# Configure Gemini client (lazy load to avoid runtime library conflicts)
-_gemini_client = None
-
-def _get_gemini_client() -> genai.Client:
-    global _gemini_client
-    if _gemini_client is None:
-        _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    return _gemini_client
 
 
 def _is_retryable(exception) -> bool:
@@ -62,15 +50,27 @@ def _is_retryable(exception) -> bool:
     return True
 
 
+class _LLMResponse:
+    """Thin response wrapper so callers can do `response.text` unchanged."""
+    def __init__(self, text: str):
+        self.text = text
+
+
 @retry(
     wait=wait_exponential(multiplier=1, min=2, max=10),
     stop=stop_after_attempt(3),
-    retry=_is_retryable,
+    retry=retry_if_exception(_is_retryable),
     reraise=True
 )
 def generate_content_with_retry(client, model, contents):
-    """Retry on 503 high demand only. Immediately raises on 429 quota / 401 bad key."""
-    return client.models.generate_content(model=model, contents=contents)
+    """
+    LLM call with retry logic.
+    Routes to Groq using llama-3.1-8b-instant.
+    The `client` and `model` parameters are kept for backward compatibility
+    but are ignored — llm_client reads Groq config from .env directly.
+    """
+    from llm.llm_client import generate_text
+    return _LLMResponse(generate_text(contents))
 
 
 def _compute_table_hash(table_meta: dict) -> str:
@@ -105,7 +105,7 @@ def _save_cache(cache: dict) -> None:
 
 def _generate_description_via_llm(table_meta: dict) -> str:
     """
-    Call Gemini Flash to generate a 3-sentence business description
+    Call LLM to generate a 3-sentence business description
     of a database table.
     """
     column_list = ", ".join(c["name"] for c in table_meta["columns"])
@@ -127,19 +127,14 @@ Row Count: {table_meta.get('row_count', 'unknown')}{sample_info}
 
 Description:"""
 
-    client = _get_gemini_client()
-    response = generate_content_with_retry(
-        client,
-        model=GEMINI_MODEL,
-        contents=prompt,
-    )
-    return response.text.strip()
+    from llm.llm_client import generate_text
+    return generate_text(prompt)
 
 
 def get_semantic_description(table_meta: dict) -> str:
     """
     Return a semantic business description for a table.
-    Uses cached version if available; calls Gemini if not.
+    Uses cached version if available; calls LLM if not.
 
     Args:
         table_meta: Dict with keys: table_name, columns, row_count, sample_values
@@ -154,7 +149,7 @@ def get_semantic_description(table_meta: dict) -> str:
     if table_hash in cache:
         return cache[table_hash]
 
-    # Cache MISS — call Gemini
+    # Cache MISS — call LLM
     description = _generate_description_via_llm(table_meta)
 
     # Persist to cache
@@ -187,11 +182,12 @@ def get_cache_stats() -> dict:
 if __name__ == "__main__":
     print("\n[INFO] Testing semantic description generator...\n")
 
-    # Verify Gemini API key is set
-    if not GEMINI_API_KEY:
-        print("  [FAIL] GEMINI_API_KEY not set in .env")
+    # Verify Groq API key is set
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    if not GROQ_API_KEY:
+        print("  [FAIL] GROQ_API_KEY not set in .env")
         sys.exit(1)
-    print(f"  API Key  : {GEMINI_API_KEY[:8]}...{GEMINI_API_KEY[-4:]}")
+    print(f"  API Key  : {GROQ_API_KEY[:8]}...{GROQ_API_KEY[-4:]}")
 
     # Create a fake table metadata for testing
     test_meta = {
