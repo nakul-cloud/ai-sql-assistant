@@ -1,6 +1,6 @@
 # Large Language Model (LLM) Layer
 
-This directory handles API calls to Google Gemini, processes prompt contexts, and validates generated SQL statements to prevent security issues.
+This directory handles API calls to Groq LLM API, processes prompt contexts, and validates generated SQL statements to prevent security issues.
 
 ---
 
@@ -9,15 +9,15 @@ This directory handles API calls to Google Gemini, processes prompt contexts, an
 ```mermaid
 flowchart LR
     SchemaCtx[Schema Context] & UserQ[User Query] --> SQLGen[query_ai.py]
-    SQLGen -->|1. Generate SQL| GeminiG[Gemini Client]
-    GeminiG -->|2. Clean SQL| Cleaner[SQL Cleaner]
+    SQLGen -->|1. Generate SQL| GroqG[Groq Client]
+    GroqG -->|2. Clean SQL| Cleaner[SQL Cleaner]
     Cleaner -->|3. Regex Guardrails| Validator[SQL Validator]
     Validator -->|Output Safe SQL| Exec[Execution Output]
     
     Exec --> Enricher[result_enricher.py]
     Enricher & UserQ & SQLGen --> NLGen[response_generator.py]
-    NLGen -->|4. Summarize Enriched Profile| GeminiR[Gemini Client]
-    GeminiR -->|Conversational Summary| FinalAns[Plain English Answer]
+    NLGen -->|4. Summarize Enriched Profile| GroqR[Groq Client]
+    GroqR -->|Conversational Summary| FinalAns[Plain English Answer]
 ```
 
 ---

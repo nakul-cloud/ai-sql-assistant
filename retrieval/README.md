@@ -29,7 +29,7 @@ flowchart TD
 ### 1. `query_router.py`
 Determines user intent using a tiered classification strategy:
 - **Regex Check**: Screens inputs against pre-defined patterns (greetings, thanks, explicit database commands). Routes common requests instantly without calling APIs.
-- **LLM Fallback**: Ambiguous queries are classified by Gemini Flash into one of three categories:
+- **LLM Fallback**: Ambiguous queries are classified by Groq Llama 3 into one of three categories:
   1. `CHAT`: Conversational messages.
   2. `SQL_QUERY`: Requests to query or analyze table data.
   3. `SCHEMA_INFO`: Inquiries about database tables, columns, or keys.
@@ -56,7 +56,7 @@ Caches natural language responses in a separate Qdrant collection:
 
 | Intent | Routing Rule | Next Pipeline Step |
 |:---|:---|:---|
-| **`CHAT`** | Matches greetings, thank-you messages, and conversational text. | Simple Gemini conversational response. |
+| **`CHAT`** | Matches greetings, thank-you messages, and conversational text. | Simple Groq conversational response. |
 | **`SCHEMA_INFO`** | Matches questions asking about active tables, metadata, or table columns. | Schema context synthesis summarizing the database metadata. |
 | **`SQL_QUERY`** | Matches requests for statistics, aggregations, or list views. | Runs the hybrid retrieval, SQL generation, and database execution pipeline. |
 

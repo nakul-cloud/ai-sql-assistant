@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11-blue?logo=python&logoColor=white" />
   <img src="https://img.shields.io/badge/Streamlit-1.x-FF4B4B?logo=streamlit&logoColor=white" />
-  <img src="https://img.shields.io/badge/Gemini-Flash-4285F4?logo=google&logoColor=white" />
+  <img src="https://img.shields.io/badge/Groq-Llama_3-orange?logo=groq&logoColor=white" />
   <img src="https://img.shields.io/badge/Qdrant-Vector_DB-DC382D?logo=qdrant&logoColor=white" />
   <img src="https://img.shields.io/badge/SQL_Server-Express-CC2927?logo=microsoftsqlserver&logoColor=white" />
 </p>
@@ -10,7 +10,7 @@
 
 <p align="center">
   <strong>Ask questions in plain English. Get SQL results instantly.</strong><br/>
-  Enterprise-grade natural language to SQL pipeline powered by hybrid vector search and Google Gemini.
+  Enterprise-grade natural language to SQL pipeline powered by hybrid vector search and Groq Llama 3.
 </p>
 
 ---
@@ -38,9 +38,9 @@ No SQL knowledge required. No manual table selection. Works across 100+ tables.
 | **Hybrid Search** | Qdrant RRF Fusion | Merges dense + sparse results |
 | **Query Cache** | Qdrant cosine similarity | Threshold: 0.92 |
 | **Description Cache** | Local JSON file | Hash-keyed by schema signature |
-| **Intent Router** | Regex + Gemini Flash Lite | Regex first, LLM only if ambiguous |
-| **SQL Generation** | Google Gemini Flash | Natural language to SQL |
-| **NL Response** | Google Gemini Flash | Results to human-readable answer |
+| **Intent Router** | Regex + Groq Llama 3 | Regex first, LLM only if ambiguous |
+| **SQL Generation** | Groq Llama 3 (8B) | Natural language to SQL |
+| **NL Response** | Groq Llama 3 (8B) | Results to human-readable answer |
 | **Scheduler** | APScheduler | Nightly full re-index |
 | **DB Driver** | SQLAlchemy + pyodbc | Connection pooling, Windows Auth |
 
@@ -55,10 +55,10 @@ graph LR
     USER["User Question"] --> STREAMLIT["Streamlit UI"]
     STREAMLIT --> PIPELINE["Query Pipeline"]
     PIPELINE --> QDRANT["Qdrant Vector DB"]
-    PIPELINE --> GEMINI["Google Gemini"]
+    PIPELINE --> GROQ["Groq LLM API"]
     PIPELINE --> SQLDB["SQL Server"]
     SQLDB --> PIPELINE
-    GEMINI --> PIPELINE
+    GROQ --> PIPELINE
     QDRANT --> PIPELINE
     PIPELINE --> STREAMLIT
     STREAMLIT --> USER
@@ -110,10 +110,10 @@ flowchart TD
     QC -->|"cache MISS"| HR["Hybrid Retriever\nRRF Fusion"]
 
     HR --> SCB["Schema Context Builder\ntop 3 tables"]
-    SCB --> SQLG["SQL Generator\nGemini Flash"]
+    SCB --> SQLG["SQL Generator\nGroq Llama 3"]
     SQLG --> VAL["SQL Validator\nSELECT-only guard"]
     VAL --> EXEC["SQL Server\nQuery Execution"]
-    EXEC --> NL["NL Response Generator\nGemini Flash"]
+    EXEC --> NL["NL Response Generator\nGroq Llama 3"]
     NL --> STORE["Store in Query Cache"]
     STORE --> ANS2["User sees Answer + Table"]
 
@@ -194,8 +194,8 @@ ai-sql-assistant/
 │   └── result_enricher.py           #   Semantic SQL output enrichment
 │
 ├── llm/
-│   ├── query_ai.py                  #   Gemini SQL generation
-│   └── response_generator.py        #   Gemini NL response
+│   ├── query_ai.py                  #   Groq SQL generation
+│   └── response_generator.py        #   Groq NL response
 │
 ├── workflow/
 │   ├── process_query.py             #   End-to-end query orchestration
@@ -247,7 +247,7 @@ pip install -r requirements.txt
 docker run -d -p 6333:6333 --name qdrant qdrant/qdrant
 
 # 5. Configure .env
-# Copy the template and fill in your SQL Server, Gemini API key, etc.
+# Copy the template and fill in your SQL Server, Groq API key, etc.
 
 # 6. Run
 streamlit run app.py
@@ -292,11 +292,11 @@ python -m indexing.schema_extractor    # Schema extraction + formatting
 1. **Query cache check** — cosine similarity > 0.92 returns cached answer instantly
 2. **Hybrid retrieval** — RRF fusion of dense + sparse search, returns top 3 tables
 3. **Schema context** — builds a detailed prompt with column info + sample values
-4. **SQL generation** — Gemini Flash produces a SELECT query
+4. **SQL generation** — Groq Llama 3 produces a SELECT query
 5. **Validation** — ensures only SELECT statements pass through
 6. **Execution** — runs against SQL Server, returns results
 7. **Semantic Enrichment** — analyzes rows to build lightweight statistical profiles
-8. **NL response** — Gemini Flash summarizes enriched results in plain English
+8. **NL response** — Groq Llama 3 summarizes enriched results in plain English
 9. **Cache store** — saves the query + response for future cache hits
 
 ---
@@ -308,7 +308,8 @@ python -m indexing.schema_extractor    # Schema extraction + formatting
 | `SQL_SERVER` | SQL Server instance | `localhost\SQLEXPRESS` |
 | `SQL_DATABASE` | Target database | `ai_sql_assistant` |
 | `SQL_TRUSTED_CONNECTION` | Windows Auth | `yes` |
-| `GEMINI_API_KEY` | Google Gemini API key | — |
+| `GROQ_API_KEY` | Groq API key | — |
+| `GROQ_MODEL` | Groq model identifier | `llama-3.1-8b-instant` |
 | `QDRANT_HOST` | Qdrant server | `localhost` |
 | `QDRANT_PORT` | Qdrant port | `6333` |
 | `EMBEDDING_MODEL` | Embedding model | `BAAI/bge-m3` |

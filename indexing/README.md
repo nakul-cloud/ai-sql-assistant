@@ -14,7 +14,7 @@ flowchart TD
     ChunkBuilder -->|3a. Structural Info| StructChunk[Structural Chunk]
     ChunkBuilder -->|3b. Query LLM Description| SemDesc[semantic_description.py]
     SemDesc <-->|Check Hashed Schema Signature| Cache[(description_cache.json)]
-    SemDesc -->|Gemini API Call| SemChunk[Semantic Chunk]
+    SemDesc -->|Groq API Call| SemChunk[Semantic Chunk]
     
     StructChunk -->|4. Generate Vectors| Embedder[embedder.py BGE-M3]
     SemChunk -->|4. Generate Vectors| Embedder
@@ -46,7 +46,7 @@ Splits tables into complementary vector shapes:
 
 ### 4. `semantic_description.py`
 Generates semantic details for tables:
-- **LLM Synthesis**: Uses Gemini Flash to write concise business summaries of tables based on columns and values.
+- **LLM Synthesis**: Uses Groq Llama 3 to write concise business summaries of tables based on columns and values.
 - **SHA-256 Signature Caching**: Hashes column layouts to create a signature. If the table layout matches `description_cache.json`, it reuses the cache, avoiding duplicate API costs.
 
 ### 5. `qdrant_uploader.py`
