@@ -80,6 +80,10 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         
+        # Display rephrased query if Developer Mode is on
+        if dev_mode and "rephrased" in msg and msg["rephrased"]:
+            st.info(f"🔄 **Contextualized Query:** *{msg['rephrased']}*")
+
         # Display SQL if Developer Mode is on
         if dev_mode and "sql" in msg and msg["sql"]:
             st.code(msg["sql"], language="sql")
@@ -102,7 +106,7 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("Analyzing tables and generating insights..."):
             focus_list = selected_tables if selected_tables else None
-            res = process_user_query(user_input, focus_tables=focus_list)
+            res = process_user_query(user_input, focus_tables=focus_list, chat_history=st.session_state.messages[:-1])
             
             if not res["success"]:
                 raw_error = res.get("error", "Query processing failed.")
@@ -132,6 +136,7 @@ if user_input:
             else:
                 intent = res.get("intent", "SQL_QUERY")
                 nl_response = res.get("nl_response", "")
+                rephrased = res.get("rephrased_query", "")
                 
                 # Check for SQL result details
                 sql_query = res.get("generated_sql", None)
@@ -141,17 +146,20 @@ if user_input:
                 # Render results in UI
                 st.success(nl_response)
                 
+                if dev_mode and rephrased and rephrased != user_input:
+                    st.info(f"🔄 **Contextualized Query:** *{rephrased}*")
+                    
                 if dev_mode and sql_query:
                     st.code(sql_query, language="sql")
                     
                 if rows:
-                    df = pd.DataFrame(rows)
-                    st.dataframe(df, use_container_width=True)
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True)
                     
                 # Append assistant response to state
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": nl_response,
                     "sql": sql_query,
-                    "rows": rows
+                    "rows": rows,
+                    "rephrased": rephrased if rephrased != user_input else None
                 })

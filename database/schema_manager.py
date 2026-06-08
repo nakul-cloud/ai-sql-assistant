@@ -186,17 +186,21 @@ def fetch_single_table(table_name: str, schema: str = "dbo") -> dict | None:
         }
 
 
+_metadata_cache = None
+
+
 def fetch_database_metadata(force_refresh: bool = False) -> list[dict]:
     """
     Fetch metadata for ALL user tables in the database.
-
-    Args:
-        force_refresh: If True, bypasses any caching. (Caching will be
-                       added at the Streamlit layer via st.cache_data later.)
-
-    Returns:
-        List of table metadata dicts.
+    Caches results to prevent redundant database queries on Streamlit reloads.
     """
+    global _metadata_cache
+    if _metadata_cache is not None and not force_refresh:
+        return _metadata_cache
+
+    if force_refresh:
+        fetch_single_table.cache_clear()
+
     engine = get_engine()
     metadata_list = []
 
@@ -233,6 +237,7 @@ def fetch_database_metadata(force_refresh: bool = False) -> list[dict]:
                 continue
 
     print(f"\n[OK] Extracted metadata for {len(metadata_list)}/{len(tables)} tables.")
+    _metadata_cache = metadata_list
     return metadata_list
 
 

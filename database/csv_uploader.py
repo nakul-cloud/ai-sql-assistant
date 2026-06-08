@@ -199,6 +199,10 @@ def upload_csv_and_index(
     from database.schema_manager import fetch_database_metadata
     fetch_database_metadata(force_refresh=True)
 
+    # Step 5: Bust retrieval keyword map cache
+    import retrieval.table_retriever as tr
+    tr._keyword_map = None
+
     return True, f"[OK] {msg} — table '{sanitized}' is ready to query!"
 
 

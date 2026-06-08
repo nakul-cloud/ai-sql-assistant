@@ -34,9 +34,100 @@ def get_qdrant_client() -> QdrantClient:
     return _client
 
 
+_keyword_map = None
+
+def get_keyword_map() -> dict:
+    """
+    Build a dynamic keyword map from active database metadata.
+    Maps lowercase keywords to a list of tables containing/matching them.
+    """
+    global _keyword_map
+    if _keyword_map is not None:
+        return _keyword_map
+
+    from database.schema_manager import fetch_database_metadata
+    try:
+        metadata = fetch_database_metadata()
+    except Exception:
+        metadata = []
+
+    keyword_map = {}
+    
+    # Standard synonyms/concepts mapped to tables
+    synonyms = {
+        "placement": ["dbo.csv_placement_data_full_class"],
+        "class": ["dbo.csv_placement_data_full_class"],
+        "stream": ["dbo.csv_placement_data_full_class"],
+        "specialization": ["dbo.csv_placement_data_full_class"],
+        "specialisation": ["dbo.csv_placement_data_full_class"],
+        "ticket": ["dbo.csv_customer_support_tickets"],
+        "support": ["dbo.csv_customer_support_tickets"],
+        "issue": ["dbo.csv_customer_support_tickets"],
+        "agent": ["dbo.csv_customer_support_tickets"],
+        "manager": ["dbo.csv_departments"],
+        "department": ["dbo.csv_departments", "dbo.csv_employees"],
+        "salary": ["dbo.csv_employees", "dbo.csv_placement_data_full_class"],
+        "employee": ["dbo.csv_employees", "dbo.csv_sales"],
+        "sale": ["dbo.csv_sales"],
+        "revenue": ["dbo.csv_sales"],
+        "amount": ["dbo.csv_sales"],
+        "product": ["dbo.csv_sales"]
+    }
+    
+    # Populate initial synonyms
+    for kw, tables in synonyms.items():
+        keyword_map[kw] = set(tables)
+
+    for tbl in metadata:
+        tbl_name = tbl["table_name"]
+        
+        # Clean table name keywords (e.g., "csv_sales" -> "sales")
+        clean_name = tbl_name.split(".")[-1]
+        clean_name_parts = clean_name.replace("csv_", "").split("_")
+        for part in clean_name_parts:
+            if len(part) > 2:
+                keyword_map.setdefault(part.lower(), set()).add(tbl_name)
+
+        # Column keywords
+        for col in tbl["columns"]:
+            col_name = col["name"].lower()
+            if len(col_name) > 2:
+                keyword_map.setdefault(col_name, set()).add(tbl_name)
+                # Split column name if snake_case
+                for part in col_name.split("_"):
+                    if len(part) > 2:
+                        keyword_map.setdefault(part, set()).add(tbl_name)
+
+    # Convert sets to lists
+    _keyword_map = {k: list(v) for k, v in keyword_map.items()}
+    return _keyword_map
+
+
+def fast_keyword_table_match(query: str) -> list[str]:
+    """
+    Checks if query words or segments match any of our cached table metadata keywords.
+    Bypasses deep embedding model if clear keywords match, for sub-millisecond retrieval.
+    """
+    normalized_q = query.lower()
+    keyword_map = get_keyword_map()
+    matched_tables = set()
+
+    # Tokenize the query into words (removing common punctuation)
+    import re
+    words = re.findall(r"\b\w{3,}\b", normalized_q)  # only match words of length 3+
+
+    for word in words:
+        if word in keyword_map:
+            for tbl in keyword_map[word]:
+                matched_tables.add(tbl)
+
+    return list(matched_tables)
+
+
 def retrieve_relevant_tables(user_query: str, top_k: int = 3) -> list[str]:
     """
     Retrieves the most relevant table names using hybrid search & RRF.
+    Optimized with a fast keyword-matching cache layer to bypass embedding latency.
     
     Args:
         user_query: The user's question in natural language.
@@ -45,6 +136,14 @@ def retrieve_relevant_tables(user_query: str, top_k: int = 3) -> list[str]:
     Returns:
         List of table names (e.g. ['dbo.csv_employees', 'dbo.csv_departments'])
     """
+    # 1. Try fast keyword matching first (0ms latency)
+    matched = fast_keyword_table_match(user_query)
+    if matched:
+        matched.sort()
+        selected_tables = matched[:top_k]
+        print(f"[RAG-Fast] Selected matched tables for context: {selected_tables}")
+        return selected_tables
+
     client = get_qdrant_client()
     
     try:
