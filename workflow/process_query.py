@@ -3,12 +3,15 @@ workflow/process_query.py
 ─────────────────────────
 Unified production-grade execution pipeline for the Enterprise AI SQL Assistant.
 Orchestrates: Router -> Cache (Check) -> Retriever -> Schema Builder -> SQL Gen -> Executor -> NL Response -> Cache (Store).
+Fully powered by LangChain LCEL.
 """
 
 import logging
 from typing import Dict, Any
 
 from dotenv import load_dotenv
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 from retrieval.query_router import route_query
 from retrieval.query_cache import check_query_cache, store_in_query_cache
@@ -19,34 +22,33 @@ from workflow.query_executor import execute_sql_query
 from llm.response_generator import generate_natural_language_response
 from analysis.result_enricher import enrich_sql_result
 from database.schema_manager import fetch_database_metadata
-from indexing.semantic_description import generate_content_with_retry
+from llm.llm_client import get_llm
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# ── LangChain CHAT chain ──────────────────────────────────────────────────────
+CHAT_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """You are a helpful and professional Enterprise AI SQL Analytics Assistant.
+Answer the user's conversational message politely, briefly, and guide them on how they can query the database.
+Mention that you can answer analytical queries about employees, departments, and sales data."""),
+    ("human", "{user_query}")
+])
+
+_chat_chain = CHAT_PROMPT | get_llm(temperature=0.7) | StrOutputParser()
+
 
 def handle_chat_query(user_query: str) -> Dict[str, Any]:
     """
-    Handle general chat and conversational queries using Groq.
+    Handle general chat and conversational queries using LangChain.
     """
-    logger.info(f"Handling CHAT query: '{user_query}'")
-    prompt = f"""You are a helpful and professional Enterprise AI SQL Analytics Assistant.
-Answer the user's conversational message politely, briefly, and guide them on how they can query the database.
-Mention that you can answer analytical queries about employees, departments, and sales data.
-
-User Message: "{user_query}"
-Response:"""
+    logger.info(f"Handling CHAT query via LangChain: '{user_query}'")
     try:
-        client = None
-        response = generate_content_with_retry(
-            client,
-            model=None,
-            contents=prompt,
-        )
+        response_text = _chat_chain.invoke({"user_query": user_query})
         return {
             "success": True,
             "intent": "CHAT",
-            "nl_response": response.text.strip(),
+            "nl_response": response_text.strip(),
             "cache_hit": False
         }
     except Exception as e:
@@ -59,11 +61,27 @@ Response:"""
         }
 
 
+# ── LangChain SCHEMA_INFO chain ──────────────────────────────────────────────
+SCHEMA_INFO_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """You are a database structure expert and documentation assistant.
+Answer the user's question about the database structure, tables, columns, or schemas using the metadata provided.
+Be concise, accurate, and direct."""),
+    ("human", """Database Metadata:
+------------------
+{formatted_meta}
+
+User Question: "{user_query}"
+Response:""")
+])
+
+_schema_info_chain = SCHEMA_INFO_PROMPT | get_llm(temperature=0.2) | StrOutputParser()
+
+
 def handle_schema_info_query(user_query: str) -> Dict[str, Any]:
     """
     Handle queries asking about the database tables, schemas, or structure.
     """
-    logger.info(f"Handling SCHEMA_INFO query: '{user_query}'")
+    logger.info(f"Handling SCHEMA_INFO query via LangChain: '{user_query}'")
     try:
         metadata_list = fetch_database_metadata()
         
@@ -77,28 +95,16 @@ def handle_schema_info_query(user_query: str) -> Dict[str, Any]:
                 f"  Approximate Row Count: {meta['row_count']}"
             )
         formatted_meta = "\n".join(meta_lines)
+
+        response_text = _schema_info_chain.invoke({
+            "formatted_meta": formatted_meta,
+            "user_query": user_query
+        })
         
-        prompt = f"""You are a database structure expert and documentation assistant.
-Answer the user's question about the database structure, tables, columns, or schemas using the metadata below.
-Be concise, accurate, and direct.
-
-Database Metadata:
-------------------
-{formatted_meta}
-
-User Question: "{user_query}"
-Response:"""
-
-        client = None
-        response = generate_content_with_retry(
-            client,
-            model=None,
-            contents=prompt,
-        )
         return {
             "success": True,
             "intent": "SCHEMA_INFO",
-            "nl_response": response.text.strip(),
+            "nl_response": response_text.strip(),
             "cache_hit": False,
             "metadata_summary": formatted_meta
         }
@@ -110,6 +116,22 @@ Response:"""
             "error": str(e),
             "nl_response": "I'm sorry, I could not retrieve the database schema information at this time."
         }
+
+
+# ── LangChain contextualization chain ─────────────────────────────────────────
+CONTEXTUALIZE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """You are a conversational database query contextualization assistant.
+Given the conversation history and the user's latest follow-up question, rephrase the question to be a self-contained, standalone query (in natural language) that contains all necessary context from the history.
+If the latest question is already completely standalone and needs no context, return it exactly as is.
+DO NOT answer the question. DO NOT write SQL. Return ONLY the self-contained question text."""),
+    ("human", """Conversation History:
+{history_str}
+
+Latest Follow-up Question: "{user_query}"
+Standalone Question:""")
+])
+
+_contextualize_chain = CONTEXTUALIZE_PROMPT | get_llm(temperature=0.0) | StrOutputParser()
 
 
 def contextualize_query(user_query: str, chat_history: list) -> str:
@@ -131,20 +153,11 @@ def contextualize_query(user_query: str, chat_history: list) -> str:
         
     history_str = "\n".join(turns)
 
-    prompt = f"""You are a conversational database query contextualization assistant.
-Given the following conversation history and the user's latest follow-up question, rephrase the question to be a self-contained, standalone query (in natural language) that contains all necessary context from the history.
-If the latest question is already completely standalone and needs no context, return it exactly as is.
-DO NOT answer the question. DO NOT write SQL. Return ONLY the self-contained question text.
-
-Conversation History:
-{history_str}
-
-Latest Follow-up Question: "{user_query}"
-Standalone Question:"""
-
     try:
-        from llm.llm_client import generate_text
-        rephrased = generate_text(prompt)
+        rephrased = _contextualize_chain.invoke({
+            "history_str": history_str,
+            "user_query": user_query
+        })
         rephrased_clean = rephrased.strip().strip('"\'')
         if rephrased_clean:
             logger.info(f"Rephrased user query: '{user_query}' -> '{rephrased_clean}'")
@@ -224,6 +237,27 @@ def process_user_query(user_query: str, focus_tables: list = None, chat_history:
     # Execute SQL Query
     exec_res = execute_sql_query(sql_query)
     if not exec_res["success"]:
+        logger.warning(f"Standard SQL execution failed: {exec_res.get('error')}. Falling back to autonomous LangChain agent...")
+        try:
+            from llm.langchain_agent import run_autonomous_sql_agent
+            agent_res = run_autonomous_sql_agent(active_query)
+            if agent_res["success"]:
+                return {
+                    "success": True,
+                    "intent": "SQL_QUERY",
+                    "cache_hit": False,
+                    "generated_sql": agent_res.get("generated_sql", "LangChain Agent Execution"),
+                    "query_result": {
+                        "columns": ["Message"],
+                        "rows": [[agent_res["nl_response"]]],
+                        "row_count": 1
+                    },
+                    "rephrased_query": active_query,
+                    "nl_response": agent_res["nl_response"]
+                }
+        except Exception as agent_err:
+            logger.error(f"LangChain autonomous agent fallback failed: {agent_err}")
+ 
         return {
             "success": False,
             "intent": "SQL_QUERY",
@@ -231,7 +265,7 @@ def process_user_query(user_query: str, focus_tables: list = None, chat_history:
             "error": exec_res.get("error", "Database execution error."),
             "generated_sql": sql_query,
             "rephrased_query": active_query,
-            "nl_response": "The generated SQL query failed to execute against the database."
+            "nl_response": f"The generated SQL query failed to execute: {exec_res.get('error')}"
         }
         
     query_result = exec_res["result"]

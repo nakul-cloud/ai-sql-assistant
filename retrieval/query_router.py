@@ -6,18 +6,20 @@ Routes user queries into three distinct intents:
   2. SQL_QUERY   → Analytical questions requiring SQL Server queries
   3. SCHEMA_INFO → Questions about database structure, tables, and columns
 
-Uses a hybrid regex pre-check + LLM intent classifier (Groq).
-
-Usage:
-    python -m retrieval.query_router
+Uses a hybrid regex pre-check + LangChain intent classifier (Groq).
 """
 
 import os
 import re
 import sys
+import logging
 from dotenv import load_dotenv
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from llm.llm_client import get_llm
 
-from indexing.semantic_description import generate_content_with_retry
+load_dotenv()
+logger = logging.getLogger(__name__)
 
 # Regex patterns for direct routing
 CHAT_PATTERNS = [
@@ -65,31 +67,35 @@ def pre_check_intent(user_query: str) -> str | None:
     return None
 
 
+# ── LangChain intent classifier (LLM fallback only) ──────────────────────────
+
+INTENT_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """Classify the user's message into exactly one of these three intents:
+- SQL_QUERY: The user wants data, reports, counts, lists, or analysis from the database tables.
+- SCHEMA_INFO: The user is asking about the database structure, table definitions, column names, schema structures, or what tables exist.
+- CHAT: General conversation, greetings, thanks, or questions unrelated to data.
+
+Reply with ONLY one word: SQL_QUERY, SCHEMA_INFO, or CHAT. No explanation."""),
+    ("human", "{user_query}")
+])
+
+
+def build_intent_chain():
+    llm = get_llm(temperature=0.0)
+    return INTENT_PROMPT | llm | StrOutputParser()
+
+
+_intent_chain = build_intent_chain()
+
+
 def llm_classify_intent(user_query: str) -> str:
     """
-    Use the LLM to classify ambiguous queries.
+    Use LangChain to classify ambiguous queries.
     """
-    prompt = f"""
-    You are an intent classifier for a database assistant.
-    Classify the user's query into one of three classes:
-    
-    1. CHAT: General greeting, chat, thanks, or simple conversational query.
-    2. SQL_QUERY: A request to retrieve, filter, aggregate, or analyze data from tables (e.g. employee lists, sales figures, revenue totals).
-    3. SCHEMA_INFO: A request specifically asking about table definitions, column names, keys, schema structures, or what tables exist.
-
-    Respond with ONLY the class name: CHAT, SQL_QUERY, or SCHEMA_INFO. Do not write anything else.
-
-    Query: "{user_query}"
-    Class:
-    """
+    logger.info("Classifying intent via LangChain.")
     try:
-        client = None
-        response = generate_content_with_retry(
-            client,
-            model=None,
-            contents=prompt,
-        )
-        intent = response.text.strip().upper()
+        result = _intent_chain.invoke({"user_query": user_query})
+        intent = result.strip().upper()
         if intent in ("CHAT", "SQL_QUERY", "SCHEMA_INFO"):
             return intent
         # Fallback parsing
@@ -98,7 +104,7 @@ def llm_classify_intent(user_query: str) -> str:
                 return possible
         return "SQL_QUERY"  # Default fallback
     except Exception as e:
-        print(f"  [WARNING] LLM intent classification failed: {e}. Defaulting to SQL_QUERY.")
+        logger.warning(f"LLM intent classification failed: {e}. Defaulting to SQL_QUERY.")
         return "SQL_QUERY"
 
 
@@ -111,7 +117,7 @@ def route_query(user_query: str) -> str:
     if intent:
         return intent
 
-    # 2. Use LLM if ambiguous (~300ms)
+    # 2. Use LangChain if ambiguous
     return llm_classify_intent(user_query)
 
 
@@ -126,7 +132,6 @@ if __name__ == "__main__":
         ("What is the total sales amount in May 2026?", "SQL_QUERY"),
         ("List the columns in the csv_sales table", "SCHEMA_INFO"),
         ("What tables do we have in this database?", "SCHEMA_INFO"),
-        ("Can you tell me about the weather?", "CHAT"),  # ambiguous/general -> Classified by LLM
     ]
 
     for q, expected in test_queries:

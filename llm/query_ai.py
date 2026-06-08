@@ -1,7 +1,7 @@
 """
 llm/query_ai.py
 ───────────────
-Production-grade AI SQL generation engine using Groq (llama-3.1-8b-instant).
+Production-grade AI SQL generation engine using LangChain LCEL.
 """
 
 import os
@@ -10,29 +10,31 @@ import logging
 from typing import Dict, Any
 
 from dotenv import load_dotenv
-
-from indexing.semantic_description import generate_content_with_retry
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from llm.llm_client import get_llm
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# System instructions/prompt for SQL Generation
-SQL_GENERATION_PROMPT = """You are an expert Microsoft SQL Server (T-SQL) engineer.
+# Prompt for SQL Generation
+SQL_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """You are an expert Microsoft SQL Server (T-SQL) engineer.
+Generate an accurate, optimized, production-grade SELECT query.
 
-Your task is to generate accurate, optimized, production-grade SELECT queries.
-
-STRICT RULES:
-1. Generate ONLY valid Microsoft SQL Server (T-SQL) syntax.
-2. Never hallucinate table names or column names. Use ONLY the provided database schema context.
-3. Only generate SELECT queries. Never generate destructive queries (DROP, DELETE, TRUNCATE, ALTER, UPDATE, INSERT, EXEC).
-4. Never explain the SQL or wrap it in triple backticks. Return ONLY executable SQL.
-5. Use proper table aliases.
-6. Use TOP instead of LIMIT for limiting rows.
-7. Avoid SELECT *. Explicitly list the columns required.
-8. When filtering by specific text/names, use LIKE '%value%' and search across relevant string columns.
-9. If combining TOP and DISTINCT, you MUST write DISTINCT before TOP (e.g. SELECT DISTINCT TOP 10 ... instead of SELECT TOP 10 DISTINCT ...).
-
-Database Schema Context:
+Rules:
+- Generate ONLY valid Microsoft SQL Server (T-SQL) syntax.
+- Use table and column names exactly as provided in the schema.
+- Only generate SELECT queries. Never generate destructive queries (DROP, DELETE, TRUNCATE, ALTER, UPDATE, INSERT, EXEC).
+- Return ONLY the SQL query, no explanation, no markdown fences.
+- Use proper table aliases.
+- Use TOP instead of LIMIT for limiting rows.
+- Avoid SELECT *. Explicitly list the columns required.
+- When filtering by specific text/names, use LIKE '%value%' and search across relevant string columns.
+- If combining TOP and DISTINCT, you MUST write DISTINCT before TOP (e.g. SELECT DISTINCT TOP 10 ... instead of SELECT TOP 10 DISTINCT ...).
+- If the question cannot be answered from the schema, say: CANNOT_GENERATE
+"""),
+    ("human", """Database Schema Context:
 ------------------------
 {schema_context}
 
@@ -40,7 +42,8 @@ User Question:
 --------------
 {user_query}
 
-Generate a valid Microsoft SQL Server query:"""
+Generate a valid Microsoft SQL Server query:""")
+])
 
 
 def clean_sql_query(sql_text: str) -> str:
@@ -88,7 +91,7 @@ def validate_sql_response(sql_query: str) -> None:
         statements = [s.strip() for s in upper_query.split(";") if s.strip()]
         if len(statements) > 1:
             raise ValueError("Multiple SQL statements are not allowed.")
-
+ 
     for keyword in forbidden_keywords:
         pattern = rf"\b{keyword}\b"
         if re.search(pattern, upper_query):
@@ -105,6 +108,14 @@ def validate_sql_response(sql_query: str) -> None:
         raise ValueError("Generated SQL is not a SELECT query.")
 
 
+def build_sql_chain():
+    llm = get_llm(temperature=0.0)
+    return SQL_PROMPT | llm | StrOutputParser()
+
+
+_sql_chain = build_sql_chain()
+
+
 def generate_sql_query(user_query: str, schema_context: str) -> Dict[str, Any]:
     """
     Main entry point for generating SQL from user query and schema context.
@@ -112,19 +123,19 @@ def generate_sql_query(user_query: str, schema_context: str) -> Dict[str, Any]:
     logger.info(f"Generating SQL for query: '{user_query}'")
     
     try:
-        client = None
-        prompt = SQL_GENERATION_PROMPT.format(
-            schema_context=schema_context,
-            user_query=user_query
-        )
+        raw_output = _sql_chain.invoke({
+            "user_query": user_query,
+            "schema_context": schema_context
+        })
+        raw_output = raw_output.strip()
         
-        response = generate_content_with_retry(
-            client,
-            model=None,
-            contents=prompt,
-        )
-        
-        raw_output = response.text.strip()
+        if raw_output == "CANNOT_GENERATE":
+            return {
+                "success": False,
+                "user_query": user_query,
+                "error": "I couldn't find relevant data to answer that question."
+            }
+            
         cleaned_sql = clean_sql_query(raw_output)
         
         # Validate the generated query

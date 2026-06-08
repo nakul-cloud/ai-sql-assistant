@@ -2,7 +2,7 @@
 llm/llm_client.py
 ─────────────────
 Groq LLM client for the Enterprise AI SQL Analytics Assistant.
-Uses llama-3.1-8b-instant via the Groq API.
+Uses llama-3.1-8b-instant via the Groq API and LangChain.
 
 Config (from .env):
   GROQ_API_KEY  — your Groq API key (get one free at console.groq.com)
@@ -11,9 +11,11 @@ Config (from .env):
 
 import os
 import logging
+from functools import lru_cache
 from dotenv import load_dotenv
+from langchain_groq import ChatGroq
 
-load_dotenv()
+load_dotenv(override=True)
 logger = logging.getLogger(__name__)
 
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
@@ -59,3 +61,38 @@ def generate_text(prompt: str) -> str:
         max_tokens=2048,
     )
     return response.choices[0].message.content.strip()
+
+
+@lru_cache(maxsize=2)
+def get_llm(temperature: float = 0.0) -> ChatGroq:
+    """
+    Returns a cached ChatGroq instance.
+    temperature=0.0 for SQL generation (deterministic)
+    temperature=0.3 for NL responses (slight variation is fine)
+    """
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        raise ValueError("GROQ_API_KEY is not set in .env")
+    model = os.getenv("GROQ_MODEL", GROQ_MODEL)
+    return ChatGroq(
+        model_name=model,
+        groq_api_key=groq_key,
+        temperature=temperature
+    )
+
+
+if __name__ == "__main__":
+    # Test both client types
+    print("Testing Groq generate_text...")
+    try:
+        print(generate_text("Say hello in one word."))
+    except Exception as e:
+        print(f"Groq error: {e}")
+        
+    print("\nTesting LangChain ChatGroq get_llm...")
+    try:
+        llm = get_llm()
+        response = llm.invoke("Say hello in one word.")
+        print(response.content.strip())
+    except Exception as e:
+        print(f"LLM error: {e}")
