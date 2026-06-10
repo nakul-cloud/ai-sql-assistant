@@ -41,6 +41,10 @@ about the records in your database."
 ── HALLUCINATION PREVENTION ──────────────────────────────────────────────────
 - If the data sample is empty (0 rows), say clearly: no matching records were found.
   Do not guess why. Do not suggest what the answer might be.
+- When citing rows from the data sample or statistics, you must EXACTLY match the keys and values. 
+  Double-check that you do not swap values between different rows, categories, or names 
+  (e.g., if Row 0 has job_title='Systems Engineer' and salary_usd=161547, you must never attribute 
+  that salary to another job title in your response).
 - If a statistic is missing or marked N/A, do not invent a substitute.
 - If the data is ambiguous or incomplete, say so — do not fill the gap.
 - Never say "typically", "usually", "generally", or "I believe" — only state
@@ -73,6 +77,15 @@ about the records in your database."
 - If the SQL used TOP N or a WHERE filter, frame as "the top results" or
   "matching records" — never imply these are all records that exist.
 
+── IMPORTANT SPECIFICATIONS ──────────────────────────────────────────────────
+- If the SQL query contains AVG(), SUM(), COUNT(), MAX(), or MIN(),
+  the result is an aggregation over many records — NOT a single record.
+  Never say "based on a single record" for aggregate results.
+  Instead say "across all records" or "based on the full dataset."
+- Make sure to explicitly state numbers, dollar amounts, and percentages when they are present
+  in the query result or data sample. For example, if a company has the highest AI investment,
+  state the actual investment value in your response.
+
 ── EDGE CASES ────────────────────────────────────────────────────────────────
 - 0 rows returned -> "No records were found matching your criteria. You may want
   to refine your search or check the filters."
@@ -86,6 +99,7 @@ about the records in your database."
     ("human", """User question: {user_query}
 
 SQL used: {sql_query}
+Is this an aggregation query? {is_aggregation}
 
 Pre-analyzed context:
 - Total matching records: {total_rows}
@@ -109,7 +123,8 @@ _nl_chain = build_nl_chain()
 def generate_natural_language_response(
     user_query: str,
     sql_query: str,
-    enriched_result: Dict[str, Any]
+    enriched_result: Dict[str, Any],
+    stream: bool = False
 ) -> Dict[str, Any]:
     """
     Generates a conversational response based on query results using LangChain.
@@ -130,12 +145,33 @@ def generate_natural_language_response(
             column_stats = "N/A"
             data_sample = enriched_result.get("rows", [])[:5]
 
+        # Detect if this is an aggregation query
+        import re as _re
+        AGG_KEYWORDS = ["AVG(", "SUM(", "COUNT(", "MAX(", "MIN(", "GROUP BY"]
+        is_aggregation = any(kw in sql_query.upper() for kw in AGG_KEYWORDS)
+
+        if stream:
+            # Return token generator directly
+            token_stream = _nl_chain.stream({
+                "user_query": user_query,
+                "sql_query": sql_query,
+                "total_rows": total_rows,
+                "column_stats": json.dumps(column_stats, indent=2, default=str),
+                "data_sample": json.dumps(data_sample, indent=2, default=str),
+                "is_aggregation": "YES — this result summarizes many records, not a single one." if is_aggregation else "NO"
+            })
+            return {
+                "success": True,
+                "response_text": token_stream
+            }
+
         response_text = _nl_chain.invoke({
             "user_query": user_query,
             "sql_query": sql_query,
             "total_rows": total_rows,
             "column_stats": json.dumps(column_stats, indent=2, default=str),
-            "data_sample": json.dumps(data_sample, indent=2, default=str)
+            "data_sample": json.dumps(data_sample, indent=2, default=str),
+            "is_aggregation": "YES — this result summarizes many records, not a single one." if is_aggregation else "NO"
         })
 
         logger.info("Natural language response generated successfully.")

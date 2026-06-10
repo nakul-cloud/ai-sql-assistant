@@ -21,7 +21,11 @@ import sys
 import time
 
 # Import embedder first to prevent Windows OpenMP/networking library conflicts
-from indexing.embedder import get_model
+from indexing.embedder import get_model, embed_text
+
+# Warm up PyTorch & embedding model BEFORE loading SQL Server drivers / pyodbc
+print("[INFO] Warming up local embedding model to avoid runtime thread conflicts...")
+_ = embed_text("warmup")
 
 from indexing.chunk_builder import build_all_chunks, build_table_chunks
 from indexing.qdrant_uploader import (

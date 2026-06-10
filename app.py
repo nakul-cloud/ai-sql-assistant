@@ -1,4 +1,10 @@
 import os
+# Warm up PyTorch & embedding model BEFORE loading SQL Server drivers / pyodbc
+# to prevent the Windows OpenMP/pyodbc thread collision crash.
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+from indexing.embedder import embed_text
+_ = embed_text("warmup")
+
 import streamlit as st
 from dotenv import load_dotenv
 from sqlalchemy import text
@@ -7,6 +13,17 @@ from database.schema_manager import fetch_database_metadata
 
 # Load .env
 load_dotenv(override=True)
+
+# Preload heavy embedding model during startup so first query is fast
+@st.cache_resource
+def preload_embedding_model():
+    from indexing.embedder import get_model
+    try:
+        get_model()
+    except Exception as e:
+        print(f"[WARNING] Failed to preload embedding model at startup: {e}")
+
+preload_embedding_model()
 
 # Initialize background indexing scheduler once
 from indexing.scheduler import start_scheduler

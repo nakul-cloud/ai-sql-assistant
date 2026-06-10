@@ -103,12 +103,11 @@ def _save_cache(cache: dict) -> None:
         json.dump(cache, f, indent=2, ensure_ascii=False)
 
 
-def _generate_description_via_llm(table_meta: dict) -> str:
+def _generate_description_via_llm(table_meta: dict) -> dict:
     """
-    Call LLM to generate a 3-sentence business description
-    of a database table.
+    Call LLM to generate a table description and column descriptions in a JSON structure.
     """
-    column_list = ", ".join(c["name"] for c in table_meta["columns"])
+    column_list = ", ".join(f"{c['name']} ({c['type']})" for c in table_meta["columns"])
     sample_info = ""
     if table_meta.get("sample_values"):
         sample_lines = []
@@ -117,18 +116,46 @@ def _generate_description_via_llm(table_meta: dict) -> str:
         sample_info = "\nSample values:\n" + "\n".join(sample_lines)
 
     prompt = f"""You are a database documentation expert.
-Write a 3-sentence natural language description of this database table.
-Include what business questions it can answer and what kind of data it holds.
-Focus on business meaning, not technical structure.
+Analyze the following database table structure and sample values, then output a JSON object describing both the table and its columns.
 
 Table: {table_meta['table_name']}
-Columns: {column_list}
-Row Count: {table_meta.get('row_count', 'unknown')}{sample_info}
+Row Count: {table_meta.get('row_count', 'unknown')}
+Columns and Types: {column_list}
+{sample_info}
 
-Description:"""
+You must return a valid JSON object matching this schema (with no extra keys, markdown block tags, or surrounding text):
+{{
+  "table_description": "A 3-sentence natural language description of this database table. Include what business questions it can answer and what kind of data it holds.",
+  "columns": {{
+    "column_name_1": "A brief, 1-sentence description of the business meaning of this column. Identify if it represents a salary/compensation metric, a job role name/title, a seniority/experience level, a temporal/date value, or a category.",
+    "column_name_2": "..."
+  }}
+}}
+
+JSON output:"""
 
     from llm.llm_client import generate_text
-    return generate_text(prompt)
+    response = generate_text(prompt)
+    
+    # Try to parse response as JSON
+    try:
+        clean = response.strip()
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        clean = clean.strip()
+        
+        parsed = json.loads(clean)
+        if "table_description" in parsed and "columns" in parsed:
+            return parsed
+    except Exception as e:
+        print(f"[WARNING] Failed to parse LLM JSON response for table description: {e}")
+        
+    return {
+        "table_description": response.strip(),
+        "columns": {}
+    }
 
 
 def get_semantic_description(table_meta: dict) -> str:
@@ -145,18 +172,53 @@ def get_semantic_description(table_meta: dict) -> str:
     cache = _load_cache()
     table_hash = _compute_table_hash(table_meta)
 
-    # Cache HIT — no LLM call
+    # Cache HIT
     if table_hash in cache:
-        return cache[table_hash]
+        cached_val = cache[table_hash]
+        if isinstance(cached_val, dict):
+            return cached_val.get("table_description", "")
+        return cached_val  # backward compatibility with old string cache entries
 
-    # Cache MISS — call LLM
-    description = _generate_description_via_llm(table_meta)
+    # Cache MISS
+    meta_dict = _generate_description_via_llm(table_meta)
 
     # Persist to cache
-    cache[table_hash] = description
+    cache[table_hash] = meta_dict
+    
+    # Also save a table-name to hash mapping for easy runtime lookup
+    table_name_clean = table_meta["table_name"].lower()
+    cache[f"__table_map__:{table_name_clean}"] = table_hash
+    if "." in table_name_clean:
+        short_name = table_name_clean.split(".")[-1]
+        cache[f"__table_map__:{short_name}"] = table_hash
+        
     _save_cache(cache)
 
-    return description
+    return meta_dict["table_description"]
+
+
+def get_column_descriptions(table_name: str) -> dict:
+    """
+    Look up the column descriptions cache for a given table name.
+    """
+    try:
+        cache = _load_cache()
+        table_name_clean = table_name.lower()
+        mapping_key = f"__table_map__:{table_name_clean}"
+        
+        # If mapping key doesn't exist, try table name without schema
+        table_hash = cache.get(mapping_key)
+        if not table_hash and "." in table_name_clean:
+            short_name = table_name_clean.split(".")[-1]
+            table_hash = cache.get(f"__table_map__:{short_name}")
+            
+        if table_hash and table_hash in cache:
+            cached_val = cache[table_hash]
+            if isinstance(cached_val, dict):
+                return cached_val.get("columns", {})
+    except Exception:
+        pass
+    return {}
 
 
 def clear_cache() -> None:
@@ -171,9 +233,11 @@ def clear_cache() -> None:
 def get_cache_stats() -> dict:
     """Return basic stats about the description cache."""
     cache = _load_cache()
+    # Subtract __table_map__ entries from total entries to show actual table count
+    table_entries = sum(1 for k in cache.keys() if not k.startswith("__table_map__"))
     return {
         "cache_file": CACHE_FILE,
-        "entries": len(cache),
+        "entries": table_entries,
         "file_exists": os.path.exists(CACHE_FILE),
     }
 

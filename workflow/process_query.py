@@ -1,10 +1,9 @@
-"""
-workflow/process_query.py
-─────────────────────────
-Unified production-grade execution pipeline for the Enterprise AI SQL Assistant.
-Orchestrates: Router -> Cache (Check) -> Retriever -> Schema Builder -> SQL Gen -> Executor -> NL Response -> Cache (Store).
-Fully powered by LangChain LCEL.
-"""
+import os
+# Warm up PyTorch & embedding model BEFORE loading SQL Server drivers / pyodbc
+# to prevent the Windows OpenMP/pyodbc thread collision crash.
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+from indexing.embedder import embed_text
+_ = embed_text("warmup")
 
 import logging
 from typing import Dict, Any
@@ -27,6 +26,25 @@ from llm.llm_client import get_llm
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# ── Hardcoded refusals (never reach LLM) ─────────────────────────────────────
+TEMPORAL_REFUSAL = (
+    "I don't have access to the current date or time — "
+    "I can only report on dates and years present in your data. "
+    "You can ask things like: 'What is the earliest year in the dataset?' "
+    "or 'How many records are from 2015?'"
+)
+
+OUT_OF_SCOPE_REFUSAL = (
+    "I can only answer questions about your business data. "
+    "Please ask me something about the records in your database."
+)
+
+GENERAL_KNOWLEDGE_REFUSAL = (
+    "I can only answer questions about the data in your database. "
+    "For general knowledge questions like current events, people, or politics, "
+    "please use a search engine or general assistant."
+)
+
 # ── LangChain CHAT chain ──────────────────────────────────────────────────────
 CHAT_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are a helpful and professional Enterprise AI SQL Analytics Assistant.
@@ -39,7 +57,7 @@ Briefly mention some of these topics to let the user know what they can ask abou
 _chat_chain = CHAT_PROMPT | get_llm(temperature=0.7) | StrOutputParser()
 
 
-def handle_chat_query(user_query: str) -> Dict[str, Any]:
+def handle_chat_query(user_query: str, stream: bool = False) -> Dict[str, Any]:
     """
     Handle general chat and conversational queries using LangChain.
     """
@@ -54,6 +72,18 @@ def handle_chat_query(user_query: str) -> Dict[str, Any]:
         except Exception as meta_err:
             logger.warning(f"Failed to fetch metadata for chat prompt: {meta_err}")
             available_tables = "various analytical datasets"
+
+        if stream:
+            token_stream = _chat_chain.stream({
+                "user_query": user_query,
+                "available_tables": available_tables
+            })
+            return {
+                "success": True,
+                "intent": "CHAT",
+                "nl_response": token_stream,
+                "cache_hit": False
+            }
 
         response_text = _chat_chain.invoke({
             "user_query": user_query,
@@ -91,7 +121,7 @@ Response:""")
 _schema_info_chain = SCHEMA_INFO_PROMPT | get_llm(temperature=0.2) | StrOutputParser()
 
 
-def handle_schema_info_query(user_query: str) -> Dict[str, Any]:
+def handle_schema_info_query(user_query: str, stream: bool = False) -> Dict[str, Any]:
     """
     Handle queries asking about the database tables, schemas, or structure.
     """
@@ -109,6 +139,19 @@ def handle_schema_info_query(user_query: str) -> Dict[str, Any]:
                 f"  Approximate Row Count: {meta['row_count']}"
             )
         formatted_meta = "\n".join(meta_lines)
+
+        if stream:
+            token_stream = _schema_info_chain.stream({
+                "formatted_meta": formatted_meta,
+                "user_query": user_query
+            })
+            return {
+                "success": True,
+                "intent": "SCHEMA_INFO",
+                "nl_response": token_stream,
+                "cache_hit": False,
+                "metadata_summary": formatted_meta
+            }
 
         response_text = _schema_info_chain.invoke({
             "formatted_meta": formatted_meta,
@@ -132,7 +175,7 @@ def handle_schema_info_query(user_query: str) -> Dict[str, Any]:
         }
 
 
-def handle_describe_intent(user_query: str, focus_tables: list = None) -> Dict[str, Any]:
+def handle_describe_intent(user_query: str, focus_tables: list = None, stream: bool = False) -> Dict[str, Any]:
     """
     Handles 'explain this dataset / what is this table about' type questions.
     Pulls schema metadata and generates a plain-English description.
@@ -141,23 +184,35 @@ def handle_describe_intent(user_query: str, focus_tables: list = None) -> Dict[s
     logger.info(f"Handling DESCRIBE query: '{user_query}'")
     try:
         from analysis.schema_context import get_all_table_summaries, generate_schema_context
-        from llm.describe_generator import generate_dataset_description
+        from llm.describe_generator import generate_dataset_description, generate_database_overview
         from retrieval.table_retriever import retrieve_relevant_tables
 
-        # 1. Determine target tables semantically if not explicitly provided
+        # 0. Check if the user is asking for a general overview or list of tables
+        q_lower = user_query.lower()
+        is_general_query = any(w in q_lower for w in [
+            "database", "all datasets", "all tables", "what datasets", "what tables",
+            "available datasets", "available tables", "list of datasets", "list of tables",
+            "show all datasets", "show all tables", "what data do we have", "what is in the database",
+            "explain the database", "overview of the database", "summarize the database", "show me all"
+        ])
+
+        # 1. Determine target tables semantically if not explicitly provided and NOT a general query
         tables = focus_tables
-        if not tables:
+        if not tables and not is_general_query:
             tables = retrieve_relevant_tables(user_query, top_k=1)
 
         # 2. Get the schema context for the identified tables
         if tables:
             logger.info(f"DESCRIBE intent resolved to tables: {tables}")
             relevant_schema = generate_schema_context(user_query, focus_tables=tables)
+            description = generate_dataset_description(user_query, relevant_schema, stream=stream)
         else:
-            logger.info("DESCRIBE intent fell back to all table summaries.")
-            relevant_schema = get_all_table_summaries()
-
-        description = generate_dataset_description(user_query, relevant_schema)
+            logger.info("DESCRIBE intent fell back to check general overview.")
+            if is_general_query:
+                relevant_schema = get_all_table_summaries()
+                description = generate_database_overview(user_query, relevant_schema, stream=stream)
+            else:
+                description = "I couldn't identify which specific dataset you want me to explain. Could you please specify one of the available tables? (e.g., Sales, Employees, Departments, Customer Support Tickets, Corporate AI Adoption, AI Impact on Jobs, or Placement Data)."
 
         return {
             "success": True,
@@ -193,11 +248,55 @@ Standalone Question:""")
 _contextualize_chain = CONTEXTUALIZE_PROMPT | get_llm(temperature=0.0) | StrOutputParser()
 
 
+def needs_contextualization(query: str) -> bool:
+    """
+    Dynamically determines if a follow-up query is context-dependent or self-contained.
+    Uses regex checks for pronouns, relative terms, and comparative keywords.
+    """
+    import re
+    q = query.strip().lower()
+    
+    # 1. Extremely short queries (<= 3 words) are highly likely to be fragments
+    words = q.split()
+    if len(words) <= 3:
+        return True
+        
+    # 2. Context-dependent pronouns/determiners/adverbs/comparatives
+    context_indicators = [
+        r"\b(it|they|them|their|its|he|she|him|her|his|this|that|these|those)\b",
+        r"\b(here|there|then|so|previous|above|below|former|latter|another|other)\b",
+        r"\b(compare|comparison|vs|versus|difference|diff)\b",
+        r"\b(higher|lower|more|less|better|worse|earliest|latest|highest|lowest|most|least)\b",
+        r"\b(also|and|but|or|what\s+about|how\s+about|what\s+else|anything\s+else)\b"
+    ]
+    
+    for pattern in context_indicators:
+        if re.search(pattern, q):
+            return True
+            
+    # 3. If it explicitly mentions one of the known table names, it is highly likely to be self-contained
+    try:
+        from retrieval.query_router import _load_schema_terms
+        terms = _load_schema_terms()
+        for table in terms.get("table_names", []):
+            if table in q:
+                return False
+    except Exception:
+        pass
+        
+    return False
+
+
 def contextualize_query(user_query: str, chat_history: list) -> str:
     """
     Contextualize the user's query based on recent chat history to handle follow-up questions.
     """
     if not chat_history:
+        return user_query
+
+    # Dynamically check if query actually needs history context
+    if not needs_contextualization(user_query):
+        logger.info(f"Query '{user_query}' determined to be self-contained. Bypassing LLM contextualization.")
         return user_query
 
     # Extract user/assistant turns
@@ -226,7 +325,12 @@ def contextualize_query(user_query: str, chat_history: list) -> str:
     return user_query
 
 
-def process_user_query(user_query: str, focus_tables: list = None, chat_history: list = None) -> Dict[str, Any]:
+def process_user_query(
+    user_query: str,
+    focus_tables: list = None,
+    chat_history: list = None,
+    stream: bool = False
+) -> Dict[str, Any]:
     """
     Unified query processing pipeline.
     Routes the query and performs caching, retrieval, generation, and execution as appropriate.
@@ -244,19 +348,43 @@ def process_user_query(user_query: str, focus_tables: list = None, chat_history:
     logger.info(f"Routed intent: {intent}")
     
     if intent == "CHAT":
-        res = handle_chat_query(active_query)
+        res = handle_chat_query(active_query, stream=stream)
         res["rephrased_query"] = active_query
         return res
         
     elif intent == "SCHEMA_INFO":
-        res = handle_schema_info_query(active_query)
+        res = handle_schema_info_query(active_query, stream=stream)
         res["rephrased_query"] = active_query
         return res
 
     elif intent == "DESCRIBE":
-        res = handle_describe_intent(active_query, focus_tables=focus_tables)
+        res = handle_describe_intent(active_query, focus_tables=focus_tables, stream=stream)
         res["rephrased_query"] = active_query
         return res
+
+    elif intent == "TEMPORAL":
+        logger.info("Temporal question intercepted — returning hardcoded refusal.")
+        return {
+            "success": True,
+            "intent": "TEMPORAL",
+            "cache_hit": False,
+            "rephrased_query": active_query,
+            "generated_sql": None,
+            "query_result": {},
+            "nl_response": TEMPORAL_REFUSAL
+        }
+
+    elif intent == "GENERAL_KNOWLEDGE":
+        logger.info("General knowledge question intercepted — returning refusal.")
+        return {
+            "success": True,
+            "intent": "GENERAL_KNOWLEDGE",
+            "cache_hit": False,
+            "rephrased_query": active_query,
+            "generated_sql": None,
+            "query_result": {},
+            "nl_response": GENERAL_KNOWLEDGE_REFUSAL
+        }
         
     # 2. SQL Query Execution Pipeline
     # Check cache first
@@ -291,10 +419,12 @@ def process_user_query(user_query: str, focus_tables: list = None, chat_history:
         if sql_res.get("error") == "OUT_OF_SCOPE":
             return {
                 "success": True,   # not a system error — a valid handled response
-                "intent": "SQL_QUERY",
+                "intent": "OUT_OF_SCOPE",
                 "cache_hit": False,
                 "rephrased_query": active_query,
-                "nl_response": "I can only answer questions about your business data. Please ask me something about the records in your database."
+                "generated_sql": None,
+                "query_result": {},
+                "nl_response": OUT_OF_SCOPE_REFUSAL
             }
         else:
             return {
@@ -348,7 +478,32 @@ def process_user_query(user_query: str, focus_tables: list = None, chat_history:
     enriched_result = enrich_sql_result(query_result)
     
     # Generate Natural Language Insights using the enriched profile
-    nl_res = generate_natural_language_response(active_query, sql_query, enriched_result)
+    if stream:
+        nl_res = generate_natural_language_response(active_query, sql_query, enriched_result, stream=True)
+        raw_stream = nl_res["response_text"]
+
+        def cached_stream_wrapper(strm, q, q_res):
+            accumulated = []
+            try:
+                for chunk in strm:
+                    accumulated.append(chunk)
+                    yield chunk
+            finally:
+                full_txt = "".join(accumulated).strip()
+                if full_txt:
+                    store_in_query_cache(q, full_txt, q_res)
+
+        return {
+            "success": True,
+            "intent": "SQL_QUERY",
+            "cache_hit": False,
+            "generated_sql": sql_query,
+            "query_result": query_result,
+            "rephrased_query": active_query,
+            "nl_response": cached_stream_wrapper(raw_stream, active_query, query_result)
+        }
+
+    nl_res = generate_natural_language_response(active_query, sql_query, enriched_result, stream=False)
     nl_response = nl_res["response_text"]
     
     # Store result in cache
@@ -375,6 +530,11 @@ if __name__ == "__main__":
     queries = [
         ("Hello there!", "CHAT"),
         ("What tables exist in our database?", "SCHEMA_INFO"),
+        ("How long ago was 2015?", "TEMPORAL"),
+        ("What is today's date?", "TEMPORAL"),
+        ("who is pm ?", "GENERAL_KNOWLEDGE"),
+        ("who is President of USA ?", "GENERAL_KNOWLEDGE"),
+        ("Who is the CEO of Microsoft?", "OUT_OF_SCOPE"),
         ("Show departments and their managers", "SQL_QUERY"),
         ("Show departments and their managers", "SQL_QUERY (Cache Hit Check)"),
     ]

@@ -36,6 +36,14 @@ def get_qdrant_client() -> QdrantClient:
 
 _keyword_map = None
 
+# Set of words too generic to map to specific tables
+STOP_WORDS = {
+    "dataset", "datasets", "data", "table", "tables", "info", "information",
+    "explain", "describe", "overview", "show", "list", "view", "query",
+    "find", "get", "fetch", "details", "database", "name", "id", "column", "columns",
+    "performance", "metrics"
+}
+
 def get_keyword_map() -> dict:
     """
     Build a dynamic keyword map from active database metadata.
@@ -76,7 +84,8 @@ def get_keyword_map() -> dict:
     
     # Populate initial synonyms
     for kw, tables in synonyms.items():
-        keyword_map[kw] = set(tables)
+        if kw.lower() not in STOP_WORDS:
+            keyword_map[kw] = set(tables)
 
     for tbl in metadata:
         tbl_name = tbl["table_name"]
@@ -85,18 +94,20 @@ def get_keyword_map() -> dict:
         clean_name = tbl_name.split(".")[-1]
         clean_name_parts = clean_name.replace("csv_", "").split("_")
         for part in clean_name_parts:
-            if len(part) > 2:
-                keyword_map.setdefault(part.lower(), set()).add(tbl_name)
+            part_lower = part.lower()
+            if len(part_lower) > 2 and part_lower not in STOP_WORDS:
+                keyword_map.setdefault(part_lower, set()).add(tbl_name)
 
         # Column keywords
         for col in tbl["columns"]:
             col_name = col["name"].lower()
-            if len(col_name) > 2:
+            if len(col_name) > 2 and col_name not in STOP_WORDS:
                 keyword_map.setdefault(col_name, set()).add(tbl_name)
                 # Split column name if snake_case
                 for part in col_name.split("_"):
-                    if len(part) > 2:
-                        keyword_map.setdefault(part, set()).add(tbl_name)
+                    part_lower = part.lower()
+                    if len(part_lower) > 2 and part_lower not in STOP_WORDS:
+                        keyword_map.setdefault(part_lower, set()).add(tbl_name)
 
     # Convert sets to lists
     _keyword_map = {k: list(v) for k, v in keyword_map.items()}
@@ -107,21 +118,29 @@ def fast_keyword_table_match(query: str) -> list[str]:
     """
     Checks if query words or segments match any of our cached table metadata keywords.
     Bypasses deep embedding model if clear keywords match, for sub-millisecond retrieval.
+    Scores tables based on the number of keyword hits and returns them sorted by score descending.
     """
     normalized_q = query.lower()
     keyword_map = get_keyword_map()
-    matched_tables = set()
+    table_scores = {}
 
     # Tokenize the query into words (removing common punctuation)
     import re
     words = re.findall(r"\b\w{3,}\b", normalized_q)  # only match words of length 3+
 
     for word in words:
+        if word in STOP_WORDS:
+            continue
         if word in keyword_map:
             for tbl in keyword_map[word]:
-                matched_tables.add(tbl)
+                table_scores[tbl] = table_scores.get(tbl, 0) + 1
 
-    return list(matched_tables)
+    if not table_scores:
+        return []
+
+    # Sort tables by score descending
+    sorted_tables = sorted(table_scores.keys(), key=lambda t: table_scores[t], reverse=True)
+    return sorted_tables
 
 
 def retrieve_relevant_tables(user_query: str, top_k: int = 3) -> list[str]:
@@ -139,7 +158,7 @@ def retrieve_relevant_tables(user_query: str, top_k: int = 3) -> list[str]:
     # 1. Try fast keyword matching first (0ms latency)
     matched = fast_keyword_table_match(user_query)
     if matched:
-        matched.sort()
+        # DO NOT SORT ALPHABETICALLY! Preserve the score-based sorting from fast_keyword_table_match.
         selected_tables = matched[:top_k]
         print(f"[RAG-Fast] Selected matched tables for context: {selected_tables}")
         return selected_tables

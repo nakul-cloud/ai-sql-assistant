@@ -3,6 +3,17 @@ import pandas as pd
 from workflow.process_query import process_user_query
 from database.schema_manager import fetch_database_metadata
 
+# Preload heavy embedding model during startup so first query is fast
+@st.cache_resource
+def preload_embedding_model():
+    from indexing.embedder import get_model
+    try:
+        get_model()
+    except Exception as e:
+        st.warning(f"Failed to preload embedding model: {e}")
+
+preload_embedding_model()
+
 # Page config
 st.set_page_config(
     page_title="AI SQL Analytics Assistant",
@@ -106,7 +117,7 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("Analyzing tables and generating insights..."):
             focus_list = selected_tables if selected_tables else None
-            res = process_user_query(user_input, focus_tables=focus_list, chat_history=st.session_state.messages[:-1])
+            res = process_user_query(user_input, focus_tables=focus_list, chat_history=st.session_state.messages[:-1], stream=True)
             
             if not res["success"]:
                 raw_error = res.get("error", "Query processing failed.")
@@ -143,8 +154,19 @@ if user_input:
                 query_res = res.get("query_result") or {}
                 rows = query_res.get("rows", [])
                 
-                # Render results in UI
-                st.success(nl_response)
+                # Stream results in UI
+                import inspect
+                
+                # Determine wrapper class styling for st.write_stream
+                # We can write inside st.write_stream directly
+                if inspect.isgenerator(nl_response) or (hasattr(nl_response, "__iter__") and not isinstance(nl_response, (str, bytes))):
+                    full_response_text = st.write_stream(nl_response)
+                else:
+                    # Typewriter effect for strings
+                    def char_generator():
+                        for char in nl_response:
+                            yield char
+                    full_response_text = st.write_stream(char_generator())
                 
                 if dev_mode and rephrased and rephrased != user_input:
                     st.info(f"🔄 **Contextualized Query:** *{rephrased}*")
@@ -158,7 +180,7 @@ if user_input:
                 # Append assistant response to state
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": nl_response,
+                    "content": full_response_text,
                     "sql": sql_query,
                     "rows": rows,
                     "rephrased": rephrased if rephrased != user_input else None

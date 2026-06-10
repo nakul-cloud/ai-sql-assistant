@@ -42,13 +42,49 @@ def build_describe_chain():
 
 _describe_chain = build_describe_chain()
 
-def generate_dataset_description(user_query: str, schema_summary: str) -> str:
+def generate_dataset_description(user_query: str, schema_summary: str, stream: bool = False):
     logger.info("Generating dataset description.")
+    if stream:
+        return _describe_chain.stream({
+            "user_query": user_query,
+            "schema_summary": schema_summary
+        })
     result = _describe_chain.invoke({
         "user_query": user_query,
         "schema_summary": schema_summary
     })
     return result.strip()
+
+
+OVERVIEW_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """You are a data analyst summarizing all the available tables in a database to a business user.
+Your job is to provide a brief high-level overview of the entire database.
+For each table in the schema metadata provided below:
+- Provide a brief 1-sentence summary of what it tracks.
+- Mention its approximate row count.
+Keep the entire response under 10 sentences. Do not write any SQL queries.
+"""),
+    ("human", """User question: {user_query}
+
+Database Schema Summaries:
+{schema_summary}
+
+Database Overview:""")
+])
+
+def generate_database_overview(user_query: str, schema_summary: str, stream: bool = False):
+    logger.info("Generating database overview.")
+    llm = get_llm(temperature=0.4)
+    chain = OVERVIEW_PROMPT | llm | StrOutputParser()
+    if stream:
+        return chain.stream({
+            "user_query": user_query,
+            "schema_summary": schema_summary
+        })
+    return chain.invoke({
+        "user_query": user_query,
+        "schema_summary": schema_summary
+    }).strip()
 
 
 if __name__ == "__main__":
