@@ -37,9 +37,6 @@ EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
 import torch
 torch.set_num_threads(4)
 
-# Import early to avoid Windows C-level conflicts with networking client libraries load
-from FlagEmbedding import BGEM3FlagModel
-
 # ── Singleton model ──────────────────────────────────────────────────
 _model = None
 
@@ -58,6 +55,9 @@ def get_model():
     print(f"[INFO] Loading embedding model: {EMBEDDING_MODEL} ...")
     start = time.time()
 
+    # Import locally to avoid crashing if local PyTorch/FlagEmbedding is broken but fallbacks are available
+    from FlagEmbedding import BGEM3FlagModel
+
     _model = BGEM3FlagModel(
         EMBEDDING_MODEL,
         use_fp16=True,      # half-precision for speed + lower memory
@@ -74,7 +74,7 @@ def get_model():
 
 def embed_text(text: str) -> dict:
     """
-    Embed a single text string.
+    Embed a single text string with fallback support: BGE -> OpenAI -> Gemini.
 
     Returns:
         {
@@ -82,25 +82,71 @@ def embed_text(text: str) -> dict:
             "sparse": dict          {token_id: weight} for BM25-style matching
         }
     """
-    model = get_model()
+    # 1. Try BGE (Local)
+    try:
+        model = get_model()
+        output = model.encode(
+            [text],
+            return_dense=True,
+            return_sparse=True,
+            return_colbert_vecs=False,
+        )
+        return {
+            "dense": output["dense_vecs"][0].tolist(),
+            "sparse": output["lexical_weights"][0],
+        }
+    except Exception as bge_err:
+        print(f"[WARNING] BGE embedding failed: {bge_err}. Trying OpenAI fallback...")
 
-    output = model.encode(
-        [text],
-        return_dense=True,
-        return_sparse=True,
-        return_colbert_vecs=False,   # not needed, saves memory
-    )
+    # 2. Fallback 1: OpenAI
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            from langchain_openai import OpenAIEmbeddings
+            openai_model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+            emb_fn = OpenAIEmbeddings(
+                model=openai_model,
+                openai_api_key=openai_key,
+                dimensions=1024
+            )
+            vector = emb_fn.embed_query(text)
+            return {
+                "dense": vector,
+                "sparse": {}  # OpenAI does not produce sparse embeddings
+            }
+        except Exception as oai_err:
+            print(f"[WARNING] OpenAI embedding failed: {oai_err}. Trying Gemini fallback...")
 
-    return {
-        "dense": output["dense_vecs"][0].tolist(),
-        "sparse": output["lexical_weights"][0],
-    }
+    # 3. Fallback 2: Gemini
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if gemini_key:
+        try:
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            gemini_model = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+            emb_fn = GoogleGenerativeAIEmbeddings(
+                model=gemini_model,
+                google_api_key=gemini_key
+            )
+            vector = emb_fn.embed_query(text)
+            # Standardize length to 1024 dimensions to prevent Qdrant dimensional crash
+            if len(vector) < 1024:
+                vector = vector + [0.0] * (1024 - len(vector))
+            elif len(vector) > 1024:
+                vector = vector[:1024]
+            return {
+                "dense": vector,
+                "sparse": {}
+            }
+        except Exception as gem_err:
+            print(f"[ERROR] Gemini embedding failed: {gem_err}")
+            raise gem_err
+
+    raise ValueError("All embedding options (BGE, OpenAI, Gemini) failed or are unconfigured.")
 
 
 def embed_texts(texts: list[str]) -> list[dict]:
     """
-    Embed multiple texts in a single batch (more efficient than calling
-    embed_text() in a loop).
+    Embed multiple texts in a single batch with fallback support: BGE -> OpenAI -> Gemini.
 
     Returns:
         List of {"dense": [...], "sparse": {...}} dicts
@@ -108,23 +154,65 @@ def embed_texts(texts: list[str]) -> list[dict]:
     if not texts:
         return []
 
-    model = get_model()
+    # 1. Try BGE (Local)
+    try:
+        model = get_model()
+        output = model.encode(
+            texts,
+            return_dense=True,
+            return_sparse=True,
+            return_colbert_vecs=False,
+        )
+        results = []
+        for i in range(len(texts)):
+            results.append({
+                "dense": output["dense_vecs"][i].tolist(),
+                "sparse": output["lexical_weights"][i],
+            })
+        return results
+    except Exception as bge_err:
+        print(f"[WARNING] BGE batch embedding failed: {bge_err}. Trying OpenAI fallback...")
 
-    output = model.encode(
-        texts,
-        return_dense=True,
-        return_sparse=True,
-        return_colbert_vecs=False,
-    )
+    # 2. Fallback 1: OpenAI
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            from langchain_openai import OpenAIEmbeddings
+            openai_model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+            emb_fn = OpenAIEmbeddings(
+                model=openai_model,
+                openai_api_key=openai_key,
+                dimensions=1024
+            )
+            vectors = emb_fn.embed_documents(texts)
+            return [{"dense": vec, "sparse": {}} for vec in vectors]
+        except Exception as oai_err:
+            print(f"[WARNING] OpenAI batch embedding failed: {oai_err}. Trying Gemini fallback...")
 
-    results = []
-    for i in range(len(texts)):
-        results.append({
-            "dense": output["dense_vecs"][i].tolist(),
-            "sparse": output["lexical_weights"][i],
-        })
+    # 3. Fallback 2: Gemini
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if gemini_key:
+        try:
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            gemini_model = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+            emb_fn = GoogleGenerativeAIEmbeddings(
+                model=gemini_model,
+                google_api_key=gemini_key
+            )
+            vectors = emb_fn.embed_documents(texts)
+            results = []
+            for vec in vectors:
+                if len(vec) < 1024:
+                    vec = vec + [0.0] * (1024 - len(vec))
+                elif len(vec) > 1024:
+                    vec = vec[:1024]
+                results.append({"dense": vec, "sparse": {}})
+            return results
+        except Exception as gem_err:
+            print(f"[ERROR] Gemini batch embedding failed: {gem_err}")
+            raise gem_err
 
-    return results
+    raise ValueError("All embedding options (BGE, OpenAI, Gemini) failed or are unconfigured.")
 
 
 # ── Standalone test ──────────────────────────────────────────────────

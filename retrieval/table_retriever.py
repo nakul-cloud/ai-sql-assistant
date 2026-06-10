@@ -153,30 +153,39 @@ def retrieve_relevant_tables(user_query: str, top_k: int = 3) -> list[str]:
         sparse = vectors["sparse"]
         
         # Convert sparse dict keys to integers (token IDs)
-        sparse_indices = [int(k) for k in sparse.keys()]
-        sparse_values = list(sparse.values())
+        sparse_indices = [int(k) for k in sparse.keys()] if sparse else []
+        sparse_values = list(sparse.values()) if sparse else []
         
-        # 2. Query Qdrant with prefetch & RRF fusion
-        results = client.query_points(
-            collection_name=SCHEMA_COLLECTION,
-            prefetch=[
-                Prefetch(
-                    query=dense,
-                    using="dense",
-                    limit=20
-                ),
-                Prefetch(
-                    query=SparseVector(
-                        indices=sparse_indices,
-                        values=sparse_values
+        # 2. Query Qdrant with prefetch & RRF fusion (if sparse is available) or dense-only (fallback)
+        if sparse_indices and sparse_values:
+            results = client.query_points(
+                collection_name=SCHEMA_COLLECTION,
+                prefetch=[
+                    Prefetch(
+                        query=dense,
+                        using="dense",
+                        limit=20
                     ),
-                    using="sparse",
-                    limit=20
-                )
-            ],
-            query=FusionQuery(fusion=Fusion.RRF),
-            limit=top_k * 3
-        )
+                    Prefetch(
+                        query=SparseVector(
+                            indices=sparse_indices,
+                            values=sparse_values
+                        ),
+                        using="sparse",
+                        limit=20
+                    )
+                ],
+                query=FusionQuery(fusion=Fusion.RRF),
+                limit=top_k * 3
+            )
+        else:
+            # Fallback search for OpenAI/Gemini which only produce dense vectors
+            results = client.query_points(
+                collection_name=SCHEMA_COLLECTION,
+                query=dense,
+                using="dense",
+                limit=top_k * 3
+            )
         
         # 3. Print retrieval details and scores to terminal
         print(f"\n[RAG] Retrieval details for: '{user_query}'")

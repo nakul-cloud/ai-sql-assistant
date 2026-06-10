@@ -16,7 +16,7 @@ from database.sql_server import get_engine
 
 logger = logging.getLogger(__name__)
 
-MAX_RESULT_ROWS = 1000
+MAX_RESULT_ROWS = 10000
 QUERY_TIMEOUT_SECONDS = 30
 
 

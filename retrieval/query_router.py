@@ -29,10 +29,21 @@ CHAT_PATTERNS = [
     r"^(who\s+are\s+you|what\s+is\s+your\s+name|what\s+do\s+you\s+do|what\s+can\s+you\s+do)(\b|\s|$)"
 ]
 
+DESCRIBE_PATTERNS = [
+    r"\b(what is|what's|explain|describe|tell me about|give me an overview|summarize|brief|overview)\b.*(dataset|table|data|this|it)\b",
+    r"\b(what (does|do) (this|the) (dataset|table|data) (contain|have|include|show|represent))\b",
+    r"\b(i don'?t know (anything|much)|new to this|unfamiliar)\b",
+    r"\b(what (columns|fields|information) (are|is) (in|available))\b",
+]
+
 SQL_PATTERNS = [
-    r"^(show|select|get|fetch|list|display|find|query|count|sum|average|avg|max|min|total|top|highest|lowest)\b",
-    r"\b(table|view|report|data|sales|revenue|employees?|departments?|salaries|hire\s+date|transactions?)\b",
-    r"\b(group\s+by|order\s+by|where|having|join|join\s+on)\b"
+    r"\b(show|list|find|get|fetch|count|sum|average|how many|what is)\b.*(table|record|row|ticket|employee|order|customer|invoice)",
+    r"\b(top|highest|lowest|most|least)\b.*\b(by|in|from)\b",
+    r"\b(highest|lowest|most|least|best|worst|maximum|minimum)\b.*(industry|country|company|sector|region)",
+    r"\b(average|avg|mean|total|sum)\b.*(industry|country|company|year|sector)",
+    r"\b(which|what).*(industry|country|company|sector).*(most|least|highest|lowest|best|worst|average|invest|spend|earn|save)",
+    r"\b(compare|comparison|vs|versus|difference)\b",
+    r"\b(invest|investment|spending|revenue|savings|cost|profit|adoption|maturity|deployment)\b.*(by|per|across|between|industry|country)",
 ]
 
 SCHEMA_PATTERNS = [
@@ -45,7 +56,7 @@ def pre_check_intent(user_query: str) -> str | None:
     """
     Apply fast regex matching to determine intent.
     Returns:
-        'CHAT', 'SQL_QUERY', 'SCHEMA_INFO', or None (if ambiguous)
+        'CHAT', 'DESCRIBE', 'SQL_QUERY', 'SCHEMA_INFO', or None (if ambiguous)
     """
     q = user_query.strip().lower()
 
@@ -59,7 +70,12 @@ def pre_check_intent(user_query: str) -> str | None:
         if re.match(pattern, q):
             return "CHAT"
 
-    # 3. Check obvious SQL patterns
+    # 3. Check describe patterns
+    for pattern in DESCRIBE_PATTERNS:
+        if re.search(pattern, q):
+            return "DESCRIBE"
+
+    # 4. Check obvious SQL patterns
     for pattern in SQL_PATTERNS:
         if re.search(pattern, q):
             return "SQL_QUERY"
@@ -70,12 +86,13 @@ def pre_check_intent(user_query: str) -> str | None:
 # ── LangChain intent classifier (LLM fallback only) ──────────────────────────
 
 INTENT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Classify the user's message into exactly one of these three intents:
+    ("system", """Classify the user's message into exactly one of these four intents:
 - SQL_QUERY: The user wants data, reports, counts, lists, or analysis from the database tables.
 - SCHEMA_INFO: The user is asking about the database structure, table definitions, column names, schema structures, or what tables exist.
+- DESCRIBE: The user is asking to explain the dataset, summarize the table, give an overview, or is saying they don't know anything/are new to this.
 - CHAT: General conversation, greetings, thanks, or questions unrelated to data.
 
-Reply with ONLY one word: SQL_QUERY, SCHEMA_INFO, or CHAT. No explanation."""),
+Reply with ONLY one word: SQL_QUERY, SCHEMA_INFO, DESCRIBE, or CHAT. No explanation."""),
     ("human", "{user_query}")
 ])
 
@@ -96,10 +113,10 @@ def llm_classify_intent(user_query: str) -> str:
     try:
         result = _intent_chain.invoke({"user_query": user_query})
         intent = result.strip().upper()
-        if intent in ("CHAT", "SQL_QUERY", "SCHEMA_INFO"):
+        if intent in ("CHAT", "SQL_QUERY", "SCHEMA_INFO", "DESCRIBE"):
             return intent
         # Fallback parsing
-        for possible in ("CHAT", "SQL_QUERY", "SCHEMA_INFO"):
+        for possible in ("CHAT", "SQL_QUERY", "SCHEMA_INFO", "DESCRIBE"):
             if possible in intent:
                 return possible
         return "SQL_QUERY"  # Default fallback
@@ -132,6 +149,7 @@ if __name__ == "__main__":
         ("What is the total sales amount in May 2026?", "SQL_QUERY"),
         ("List the columns in the csv_sales table", "SCHEMA_INFO"),
         ("What tables do we have in this database?", "SCHEMA_INFO"),
+        ("can you explain what this dataset is about? i'm new", "DESCRIBE"),
     ]
 
     for q, expected in test_queries:

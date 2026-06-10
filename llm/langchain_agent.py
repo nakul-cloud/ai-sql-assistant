@@ -48,14 +48,50 @@ def run_autonomous_sql_agent(user_query: str) -> Dict[str, Any]:
         engine = get_engine()
         db = SQLDatabase(engine)
 
-        # 2. Initialize the Groq LLM using ChatGroq wrapper
-        # We use llama-3.3-70b-versatile by default for agents because smaller models fail at complex tool calling chains.
+        # 2. Initialize the LLM (with dynamic fallbacks if keys are available)
         groq_model = os.getenv("GROQ_AGENT_MODEL", "llama-3.3-70b-versatile")
-        llm = ChatGroq(
+        primary_llm = ChatGroq(
             model_name=groq_model,
             groq_api_key=api_key,
             temperature=0.0
         )
+
+        fallbacks = []
+
+        # OpenAI Agent Fallback
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            try:
+                from langchain_openai import ChatOpenAI
+                openai_agent_model = os.getenv("OPENAI_AGENT_MODEL", "gpt-4o")
+                fallbacks.append(ChatOpenAI(
+                    model=openai_agent_model,
+                    openai_api_key=openai_key,
+                    temperature=0.0
+                ))
+                logger.info("OpenAI agent LLM fallback configured.")
+            except ImportError:
+                logger.warning("langchain-openai is not installed; skipping agent OpenAI fallback.")
+
+        # Gemini Agent Fallback
+        gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if gemini_key:
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                gemini_agent_model = os.getenv("GEMINI_AGENT_MODEL", "gemini-1.5-pro")
+                fallbacks.append(ChatGoogleGenerativeAI(
+                    model=gemini_agent_model,
+                    google_api_key=gemini_key,
+                    temperature=0.0
+                ))
+                logger.info("Gemini agent LLM fallback configured.")
+            except ImportError:
+                logger.warning("langchain-google-genai is not installed; skipping agent Gemini fallback.")
+
+        if fallbacks:
+            llm = primary_llm.with_fallbacks(fallbacks)
+        else:
+            llm = primary_llm
 
         # 3. Create the SQL Agent
         # We use a tool-calling agent that binds database tools directly to the LLM

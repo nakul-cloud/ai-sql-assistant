@@ -52,8 +52,31 @@ def generate_schema_context(user_query: str, focus_tables: List[str] = None) -> 
     return "\n".join(lines)
 
 
+def get_all_table_summaries() -> str:
+    """
+    Builds a summary of all tables and columns in the database for high-level description prompts.
+    """
+    from database.schema_manager import fetch_database_metadata
+    metadata_list = fetch_database_metadata()
+    if not metadata_list:
+        return "No tables available in the database."
+
+    lines = []
+    for meta in metadata_list:
+        lines.append(f"Table: {meta['table_name']}")
+        lines.append(f"Approximate Row Count: {meta['row_count']}")
+        lines.append("Columns:")
+        for col in meta["columns"]:
+            pk_marker = " [PK]" if col["name"] in meta.get("primary_keys", []) else ""
+            lines.append(f"  - {col['name']} ({col['display_type']}){pk_marker}")
+        lines.append("") # blank line between tables
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     print("\n--- Testing Schema Context Builder ---")
     test_tables = ["dbo.csv_departments", "dbo.csv_employees"]
     ctx = generate_schema_context("Show department managers", test_tables)
     print(ctx)
+    print("\n--- Testing All Table Summaries ---")
+    print(get_all_table_summaries())

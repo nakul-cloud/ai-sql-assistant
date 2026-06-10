@@ -117,10 +117,10 @@ def upload_chunks(chunks: list) -> int:
     # Build Qdrant points
     points = []
     for chunk, vectors in zip(chunks, embeddings):
-        sparse_data = vectors["sparse"]
+        sparse_data = vectors.get("sparse", {})
         # Convert sparse dict keys to integers (token IDs)
-        sparse_indices = [int(k) for k in sparse_data.keys()]
-        sparse_values = list(sparse_data.values())
+        sparse_indices = [int(k) for k in sparse_data.keys()] if sparse_data else []
+        sparse_values = list(sparse_data.values()) if sparse_data else []
 
         point = PointStruct(
             id=str(uuid4()),

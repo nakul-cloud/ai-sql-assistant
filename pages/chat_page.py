@@ -140,7 +140,7 @@ if user_input:
                 
                 # Check for SQL result details
                 sql_query = res.get("generated_sql", None)
-                query_res = res.get("query_result", {})
+                query_res = res.get("query_result") or {}
                 rows = query_res.get("rows", [])
                 
                 # Render results in UI

@@ -4,7 +4,7 @@ retrieval/query_cache.py
 Manages caching of previous user queries and natural language answers in Qdrant.
 
 Uses a separate Qdrant collection (ai_sql_query_cache) with dense vector cosine similarity.
-A match with similarity >= QUERY_CACHE_THRESHOLD (default: 0.92) is served immediately,
+A match with similarity >= QUERY_CACHE_THRESHOLD (default: 0.97) is served immediately,
 bypassing retriever, SQL generation, execution, and response writing.
 
 Usage:
@@ -28,7 +28,7 @@ load_dotenv()
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 CACHE_COLLECTION = os.getenv("QUERY_CACHE_COLLECTION", "ai_sql_query_cache")
-THRESHOLD = float(os.getenv("QUERY_CACHE_THRESHOLD", "0.92"))
+THRESHOLD = float(os.getenv("QUERY_CACHE_THRESHOLD", "0.97"))
 EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
 
 _client = None

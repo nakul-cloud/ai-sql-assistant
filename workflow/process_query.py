@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 CHAT_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are a helpful and professional Enterprise AI SQL Analytics Assistant.
 Answer the user's conversational message politely, briefly, and guide them on how they can query the database.
-Mention that you can answer analytical queries about employees, departments, and sales data."""),
+You currently have access to data regarding: {available_tables}.
+Briefly mention some of these topics to let the user know what they can ask about."""),
     ("human", "{user_query}")
 ])
 
@@ -44,7 +45,20 @@ def handle_chat_query(user_query: str) -> Dict[str, Any]:
     """
     logger.info(f"Handling CHAT query via LangChain: '{user_query}'")
     try:
-        response_text = _chat_chain.invoke({"user_query": user_query})
+        # Dynamically fetch available tables so the greeting is always accurate
+        try:
+            metadata_list = fetch_database_metadata()
+            # Extract clean table names (e.g., 'dbo.csv_employees' -> 'employees')
+            tables = [meta["table_name"].split('.')[-1].replace('csv_', '').replace('_', ' ') for meta in metadata_list]
+            available_tables = ", ".join(tables) if tables else "various analytical datasets"
+        except Exception as meta_err:
+            logger.warning(f"Failed to fetch metadata for chat prompt: {meta_err}")
+            available_tables = "various analytical datasets"
+
+        response_text = _chat_chain.invoke({
+            "user_query": user_query,
+            "available_tables": available_tables
+        })
         return {
             "success": True,
             "intent": "CHAT",
@@ -115,6 +129,51 @@ def handle_schema_info_query(user_query: str) -> Dict[str, Any]:
             "intent": "SCHEMA_INFO",
             "error": str(e),
             "nl_response": "I'm sorry, I could not retrieve the database schema information at this time."
+        }
+
+
+def handle_describe_intent(user_query: str, focus_tables: list = None) -> Dict[str, Any]:
+    """
+    Handles 'explain this dataset / what is this table about' type questions.
+    Pulls schema metadata and generates a plain-English description.
+    No SQL execution needed.
+    """
+    logger.info(f"Handling DESCRIBE query: '{user_query}'")
+    try:
+        from analysis.schema_context import get_all_table_summaries, generate_schema_context
+        from llm.describe_generator import generate_dataset_description
+        from retrieval.table_retriever import retrieve_relevant_tables
+
+        # 1. Determine target tables semantically if not explicitly provided
+        tables = focus_tables
+        if not tables:
+            tables = retrieve_relevant_tables(user_query, top_k=1)
+
+        # 2. Get the schema context for the identified tables
+        if tables:
+            logger.info(f"DESCRIBE intent resolved to tables: {tables}")
+            relevant_schema = generate_schema_context(user_query, focus_tables=tables)
+        else:
+            logger.info("DESCRIBE intent fell back to all table summaries.")
+            relevant_schema = get_all_table_summaries()
+
+        description = generate_dataset_description(user_query, relevant_schema)
+
+        return {
+            "success": True,
+            "intent": "DESCRIBE",
+            "cache_hit": False,
+            "nl_response": description,
+            "generated_sql": None,
+            "query_result": {}
+        }
+    except Exception as e:
+        logger.exception("Failed to generate dataset description.")
+        return {
+            "success": False,
+            "intent": "DESCRIBE",
+            "error": str(e),
+            "nl_response": "I'm sorry, I could not generate a description of the dataset at this time."
         }
 
 
@@ -193,6 +252,11 @@ def process_user_query(user_query: str, focus_tables: list = None, chat_history:
         res = handle_schema_info_query(active_query)
         res["rephrased_query"] = active_query
         return res
+
+    elif intent == "DESCRIBE":
+        res = handle_describe_intent(active_query, focus_tables=focus_tables)
+        res["rephrased_query"] = active_query
+        return res
         
     # 2. SQL Query Execution Pipeline
     # Check cache first
@@ -223,14 +287,24 @@ def process_user_query(user_query: str, focus_tables: list = None, chat_history:
     # Generate SQL
     sql_res = generate_sql_query(active_query, schema_context)
     if not sql_res["success"]:
-        return {
-            "success": False,
-            "intent": "SQL_QUERY",
-            "error_type": "SQL_GENERATION_FAILED",
-            "rephrased_query": active_query,
-            "error": sql_res.get("error", "Failed to generate SQL query."),
-            "nl_response": "I was unable to generate a valid SQL query for your request."
-        }
+        # Handle the two failure modes with different user messages
+        if sql_res.get("error") == "OUT_OF_SCOPE":
+            return {
+                "success": True,   # not a system error — a valid handled response
+                "intent": "SQL_QUERY",
+                "cache_hit": False,
+                "rephrased_query": active_query,
+                "nl_response": "I can only answer questions about your business data. Please ask me something about the records in your database."
+            }
+        else:
+            return {
+                "success": False,
+                "intent": "SQL_QUERY",
+                "error_type": "SQL_GENERATION_FAILED",
+                "rephrased_query": active_query,
+                "error": sql_res.get("error", "Failed to generate SQL query."),
+                "nl_response": "I couldn't find relevant data to answer that question."
+            }
         
     sql_query = sql_res["sql_query"]
     
