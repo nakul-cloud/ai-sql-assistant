@@ -41,6 +41,7 @@ Generates SQL queries from user questions using LangChain's ChatPromptTemplate a
 Converts raw database results into clear, conversational summaries using LangChain:
 - **Analyst Persona**: Guides the model to output summaries focused on business metrics, avoiding database terminology and table names.
 - **Context Injection**: Ingests an enriched statistical profile (sums, means, unique counts) instead of raw datasets. This prevents token bloat and speeds up natural language generation.
+- **Grounded Interpretation & Memory**: Ingests the last 4 turns of conversation history for continuity. Uses query metadata (`is_truncated`, `is_count_query`, `table_total_rows`) to accurately describe previews versus scalar aggregates, and blocks speculative storytelling or arbitrary currency sign additions.
 
 ### 3. `langchain_agent.py`
 Executes an autonomous SQL agent using LangChain's `create_sql_agent` with native tool-calling (`agent_type="tool-calling"`):

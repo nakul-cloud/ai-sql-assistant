@@ -32,16 +32,17 @@ No SQL knowledge required. No manual table selection. Works across 100+ tables.
 
 | Layer | Technology | Purpose |
 |:------|:-----------|:--------|
-| **Frontend** | Streamlit | Chat UI + CSV upload |
-| **Embedding** | BAAI/bge-m3 (local) | Dense 1024-dim + sparse BM25 vectors |
+| **Frontend** | Streamlit | Chat UI (with Developer Mode toggle) + CSV upload |
+| **Embedding** | BAAI/bge-m3 (local) | Dense 1024-dim + sparse BM25 vectors (cached) |
 | **Vector DB** | Qdrant (Docker) | Schema index + query cache |
 | **Hybrid Search** | Qdrant RRF Fusion | Merges dense + sparse results |
 | **Query Cache** | Qdrant cosine similarity | Threshold: 0.92 |
 | **Description Cache** | Local JSON file | Hash-keyed by schema signature |
-| **Intent Router** | Regex + LangChain ChatGroq | Regex first, LCEL chain if ambiguous |
+| **Intent Router** | Regex + LangChain ChatGroq | Dynamic sample-value checking, LCEL fallback |
 | **SQL Generation** | LangChain LCEL + ChatGroq | Structured SQL generation chain |
 | **Autonomous Agent** | LangChain SQL Agent | Tool-calling fallback for schema correction and query repair |
-| **NL Response** | LangChain LCEL + ChatGroq | Summarized insights chain |
+| **Semantic Enricher** | Pandas + SQLAlchemy | Computes averages, previews/truncations, count query indicators |
+| **NL Response** | LangChain LCEL + ChatGroq | Context-aware response generator (grounded, no currency assumptions) |
 | **Scheduler** | APScheduler | Nightly full re-index |
 | **DB Driver** | SQLAlchemy + pyodbc | Connection pooling, Windows Auth |
 
@@ -63,6 +64,8 @@ graph LR
     QDRANT --> PIPELINE
     PIPELINE --> STREAMLIT
     STREAMLIT --> USER
+    STREAMLIT --> MEMORY["Conversational Memory"]
+    MEMORY --> PIPELINE
 ```
 
 ### Phase 1: Offline Indexing Pipeline
@@ -114,10 +117,11 @@ flowchart TD
     SCB --> SQLG["SQL Generator\nLangChain ChatGroq"]
     SQLG --> VAL["SQL Validator\nSELECT-only guard"]
     VAL --> EXEC["SQL Server\nQuery Execution"]
-    EXEC -->|"Success"| NL["NL Response Generator\nLangChain ChatGroq"]
+    EXEC -->|"Success"| ENR["Semantic Result Enricher\nmetadata, averages, counts"]
     EXEC -->|"Failure"| AGENT["Autonomous SQL Agent\nllama-3.3-70b-versatile"]
+    ENR --> NL["NL Response Generator\nLangChain ChatGroq\nwith conversational memory"]
+    AGENT --> NL
     NL --> STORE["Store in Query Cache"]
-    AGENT --> STORE
     STORE --> ANS2["User sees Answer + Table"]
 
     style U fill:#2563eb,color:#fff
@@ -177,11 +181,11 @@ ai-sql-assistant/
 │
 ├── database/                        # Database layer
 │   ├── sql_server.py                #   SQLAlchemy engine + connection pooling
-│   ├── schema_manager.py            #   Schema metadata extraction
+│   ├── schema_manager.py            #   Schema metadata extraction (cached)
 │   └── csv_uploader.py              #   CSV parse + upload + re-index trigger
 │
 ├── indexing/                        # Offline indexing pipeline
-│   ├── embedder.py                  #   BAAI/bge-m3 wrapper (dense + sparse)
+│   ├── embedder.py                  #   BAAI/bge-m3 wrapper (cached, dense + sparse)
 │   ├── schema_extractor.py          #   Formats schema for chunk builder
 │   ├── chunk_builder.py             #   Structural + semantic chunk creation
 │   ├── semantic_description.py      #   LLM descriptions with JSON cache
@@ -189,24 +193,24 @@ ai-sql-assistant/
 │   └── index_manager.py            #   Startup / scheduler / incremental triggers
 │
 ├── retrieval/                       # Online query pipeline
-│   ├── query_router.py              #   Regex pre-check + LLM intent classifier
+│   ├── query_router.py              #   Regex pre-check + dynamic sample checks + LLM intent
 │   ├── table_retriever.py           #   Hybrid RRF search against Qdrant
 │   └── query_cache.py               #   Cache read/write via Qdrant
 │
 ├── analysis/
 │   ├── schema_context.py            #   Build schema prompt for LLM
-│   └── result_enricher.py           #   Semantic SQL output enrichment
+│   └── result_enricher.py           #   Statistical summaries, previews, aggregates, count flags
 │
 ├── llm/
-│   ├── query_ai.py                  #   Groq SQL generation
-│   └── response_generator.py        #   Groq NL response
+│   ├── query_ai.py                  #   Groq SQL generation (comparative & windowed rules)
+│   └── response_generator.py        #   Groq NL response (grounded, currency controls, memory context)
 │
 ├── workflow/
-│   ├── process_query.py             #   End-to-end query orchestration
-│   └── query_executor.py            #   Safe SQL execution
+│   ├── process_query.py             #   End-to-end orchestration (history formatter)
+│   └── query_executor.py            #   Safe SQL execution with limits
 │
 ├── pages/                           # Streamlit UI pages
-│   ├── chat_page.py                 #   Chat interface
+│   ├── chat_page.py                 #   Chat interface (Developer Mode)
 │   └── upload_page.py               #   CSV upload interface
 │
 ├── logs/                            # Application logs
@@ -288,27 +292,28 @@ python -m llm.langchain_agent          # Test autonomous SQL tool-calling agent
 3. **Embed** each chunk with BAAI/bge-m3 (dense 1024-dim + sparse BM25)
 4. **Upsert** into Qdrant `sql_table_schemas` collection
 
-### Step 2 — Query Routing (Online)
+### Step 2 — Query Routing & Contextualization (Online)
 > Decides how to handle each user message.
 
-1. **Regex pre-check** — catches greetings, thanks, obvious SQL patterns (~40% of messages, 0ms)
-2. **LLM intent classifier** — only called for ambiguous messages (~300ms)
-3. Routes to: `CHAT`, `SQL_QUERY`, or `SCHEMA_INFO`
+1. **Query Contextualization** — Rephrases follow-up queries using the last 4 turns of message history (e.g. resolving pronouns like "their" or "they").
+2. **Regex pre-check** — Catches greetings, thanks, obvious SQL patterns, or descriptions (~40% of messages, 0ms). Bypasses DESCRIBE routing if any dynamic schema text sample values (like categories, genders) are detected in the query.
+3. **LLM intent classifier** — Only called for ambiguous messages (~300ms).
+4. Routes to: `CHAT`, `SQL_QUERY`, `SCHEMA_INFO`, or `DESCRIBE`.
 
-### Step 3 — Query Execution (Online)
+### Step 3 — Query Execution & Response (Online)
 > Full pipeline for SQL-intent queries.
 
-1. **Query cache check** — cosine similarity > 0.92 returns cached answer instantly
-2. **Hybrid retrieval** — RRF fusion of dense + sparse search, returns top 3 tables
-3. **Schema context** — builds a detailed prompt with column info + sample values
-4. **SQL generation** — LangChain ChatGroq LCEL chain produces a SELECT query
-5. **Validation** — ensures only SELECT statements pass through
+1. **Query cache check** — Cosine similarity > 0.92 returns cached answer instantly.
+2. **Hybrid retrieval** — RRF fusion of dense + sparse search, returns top 3 tables.
+3. **Schema context** — Builds a detailed prompt with column info + sample values.
+4. **SQL generation** — LangChain ChatGroq LCEL chain produces a SELECT query (incorporating comparative and global baseline query structures for filters).
+5. **Validation** — Ensures only SELECT statements pass through.
 6. **Execution & Fallback**:
-   - **Standard Path**: Runs the SQL query on SQL Server using SQLAlchemy connection pools.
-   - **Fallback Path**: If the SQL execution fails due to schema changes or database syntax errors, the **Autonomous LangChain SQL Agent** (`llama-3.3-70b-versatile`) is triggered. The agent queries schema info, fixes syntax issues, and runs the repaired query autonomously.
-7. **Semantic Enrichment** — analyzes rows to build lightweight statistical profiles
-8. **NL response** — LangChain ChatGroq LCEL chain summarizes enriched results in plain English
-9. **Cache store** — saves the query + response for future cache hits
+   - **Standard Path**: Runs the SQL query on SQL Server using connection pools.
+   - **Fallback Path**: If SQL execution fails, the **Autonomous LangChain SQL Agent** (`llama-3.3-70b-versatile`) is triggered to query schemas, repair syntax issues, and run the repaired query.
+7. **Semantic Enrichment** — Analyzes rows to build lightweight statistical profiles, dynamically querying global averages for point filters. It also flags count queries (`is_count_query`) and preview limits (`is_truncated`) by running dynamic database total counts.
+8. **NL response** — Summarizes enriched results in natural language utilizing conversational history, strict evidence grounding, currency controls, and preview/aggregate instructions.
+9. **Cache store** — Saves the query + response for future cache hits.
 
 ---
 

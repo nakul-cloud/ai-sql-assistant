@@ -29,6 +29,7 @@ flowchart TD
 ### 1. `query_router.py`
 Determines user intent using a tiered classification strategy:
 - **Regex Check**: Screens inputs against pre-defined patterns (greetings, thanks, explicit database commands). Routes common requests instantly without calling APIs.
+- **Dynamic Value Bypass**: Automatically overrides schema-description intents when queries contain specific table categorical sample values (e.g. "female") combined with filtering prepositions/conjunctions ("for", "only", "by"). This ensures specific data queries route directly to the SQL execution pipeline instead of metadata queries.
 - **LLM Fallback**: Ambiguous queries are classified by Groq Llama 3 into one of three categories:
   1. `CHAT`: Conversational messages.
   2. `SQL_QUERY`: Requests to query or analyze table data.

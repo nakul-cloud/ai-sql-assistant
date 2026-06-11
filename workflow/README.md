@@ -63,6 +63,7 @@ The master coordinator for user requests:
   - **`SQL_QUERY`**: Runs the complete RAG execution pipeline.
 - **Cache check**: Checks the cache first. If a match is found, it skips the retrieval and SQL steps entirely.
 - **Table Scope Filtering**: Supports overriding table retrieval by passing explicit `focus_tables` (selected via the sidebar in UI).
+- **Conversational Memory Integration**: Ingests, formats, and manages chat history state, passing it as unified context to the response generator layer to support multi-turn analytical follow-up queries.
 
 ### 2. `query_executor.py`
 Executes SQL queries on SQL Server safely:

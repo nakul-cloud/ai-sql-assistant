@@ -21,6 +21,7 @@ Provides the semantic enrichment layer for SQL execution results:
 - **`enrich_sql_result()`**: Analyzes raw SQL execution records using Pandas.
 - **Statistical Summaries**: Generates lightweight profiles containing sums, means, minimums, maximums for numbers, and unique/top values for categorical data.
 - **Payload Optimization**: Shrinks massive query results (e.g., 1000+ rows) down to a tiny, token-efficient metadata summary and a 5-row sample. This prevents LLM context overload and ensures lightning-fast natural language responses.
+- **Preview & Count Query Grounding**: Parses query SQL to detect limit clauses (`TOP N`) and aggregations (`COUNT`, `SUM`, `AVG`, etc.). Dynamically fetches table-level row counts for previews, setting properties like `is_truncated` and `is_count_query` to keep responses factually accurate.
 
 ---
 
