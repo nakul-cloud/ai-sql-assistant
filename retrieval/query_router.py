@@ -66,7 +66,7 @@ SCHEMA_PATTERNS = [
 # Dataset overview — domain-agnostic
 # Dataset overview — domain-agnostic
 DESCRIBE_PATTERNS = [
-    r"\b(explain|describe|tell\s+me\s+about|give\s+me\s+an?\s+overview|summarize|sumarize|summarise|sumarise)\b.*\b(datasets?|data|tables?|this|it|trend|trends)\b",
+    r"\b(explain|describe|tell\s+me\s+about|give\s+me\s+(?:an?\s+)?overview|summarize|sumarize|summarise|sumarise)\b.*\b(datasets?|data|tables?|this|it|trend|trends)\b",
     r"\bwhat\s+(is|are|does|do)\b.*\b(datasets?|data|tables?)\b.*\b(about|contain|have|include|show|represent|track|cover|purpose)\b",
     r"\b(i\s+don'?t\s+know|new\s+to\s+this|unfamiliar|no\s+idea|help\s+me\s+understand)\b",
     r"\bwhat\s+kind\s+of\s+(data|information|questions?)\b",
@@ -84,6 +84,16 @@ GENERAL_KNOWLEDGE_PATTERNS = [
     r"\bwho\s+(won|is\s+winning)\s+(the\s+)?(election|war|match|game|world\s+cup)\b",
     r"\b(current|latest|recent)\s+(news|events?|updates?|headlines?)\b",
     r"\bwho\s+is\s+[a-z\s]+\??\s*$",  # catches bare "who is X?" questions
+]
+
+# domain-agnostic column explanation questions
+SCHEMA_EXPLANATION_PATTERNS = [
+    r"^what\s+is\s+\w+[\s_]\w*\s*\??$",           # "what is ssc_p?" "what is ai_adoption_level?"
+    r"^what\s+does\s+\w+[\s_]\w*\s+(mean|represent|stand\s+for)\s*\??$",  # "what does ssc_p mean?"
+    r"^explain\s+\w+[\s_]\w*\s*\??$",              # "explain ssc_p"
+    r"^what\s+is\s+the\s+\w+[\s_]\w*\s+(column|field|metric|variable)\s*\??$",
+    r"\bwhat\s+does\s+(the\s+)?(column|field|metric)\s+\w+\s+(mean|represent)\b",
+    r"\b(define|definition\s+of|meaning\s+of)\s+\w+[\s_]\w*\b",
 ]
 
 # Universal SQL intent signals — work for ANY domain
@@ -274,23 +284,44 @@ def pre_check_intent(user_query: str) -> Optional[str]:
             logger.debug(f"SCHEMA_INFO match: '{q}'")
             return "SCHEMA_INFO"
 
+    # ── 4b. SCHEMA_EXPLANATION (column/field meaning questions) ───────────────
+    # Must be before DESCRIBE and SQL — "what is X" is too broad in SQL patterns
+    for pattern in SCHEMA_EXPLANATION_PATTERNS:
+        if re.search(pattern, q, re.IGNORECASE):
+            # Extra check: if query term matches a known column name, confirm it
+            terms = _load_schema_terms()
+            col_names = terms.get("column_names", [])
+            for col in col_names:
+                if re.search(r"\b" + re.escape(col) + r"\b", q, re.IGNORECASE):
+                    logger.debug(f"SCHEMA_EXPLANATION match: '{q}'")
+                    return "SCHEMA_EXPLANATION"
+            # Even without column match, short "what is X" questions likely mean schema
+            words = q.strip("?").split()
+            if len(words) <= 5:
+                return "SCHEMA_EXPLANATION"
+
     # ── 5. DESCRIBE ───────────────────────────────────────────────────────────
     for pattern in DESCRIBE_PATTERNS:
         if re.search(pattern, q, re.IGNORECASE):
-            # Bypass DESCRIBE if the query indicates subset filtering or data aggregation
             bypass_describe = False
-            if re.search(r"\b(only|where|having|when|by|for|who|whose|which|with|vs|versus|compare|comparison|difference|between)\b", q):
-                if not re.search(r"\b(move|switch|change|focus)\b", q):
-                    bypass_describe = True
-            
-            # Dynamic check: if query mentions any known categorical/text sample value from the database, bypass DESCRIBE
-            terms = _load_schema_terms()
-            for val in terms.get("sample_values", []):
-                # Search value as a whole word to prevent partial matching (e.g. "it" in "split")
-                if re.search(r"\b" + re.escape(val) + r"\b", q):
-                    bypass_describe = True
-                    break
-            
+
+            # Only bypass DESCRIBE if query has BOTH:
+            # 1. A filtering/comparison keyword (where/by/vs/for)
+            # 2. AND a specific value or entity being filtered on
+            # Do NOT bypass just because a schema term appears —
+            # "give me overview of placement data" should still be DESCRIBE
+            has_filter_keyword = bool(re.search(
+                r"\b(where|having|when|vs|versus|compare|difference|between|only|excluding)\b", q
+            ))
+            # "for X" / "by X" only bypass if followed by a specific named value
+            # not a table name alone
+            has_specific_filter = bool(re.search(
+                r"\b(for|by)\s+\w+\s+(and|or|vs|,|\bin\b)", q
+            ))
+
+            if has_filter_keyword or has_specific_filter:
+                bypass_describe = True
+
             if not bypass_describe:
                 logger.debug(f"DESCRIBE match: '{q}'")
                 return "DESCRIBE"
@@ -314,16 +345,18 @@ def pre_check_intent(user_query: str) -> Optional[str]:
 # ── LangChain intent classifier (LLM fallback only) ──────────────────────────
 
 INTENT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Classify the user's message into exactly one of these six intents:
+    ("system", """Classify the user's message into exactly one of these seven intents:
 
-- SQL_QUERY        : The user wants data, reports, counts, lists, or analysis from the database.
-- SCHEMA_INFO      : The user is asking about database structure, table names, column names, or schema.
-- DESCRIBE         : The user wants a plain English explanation of what a dataset or table contains.
-- TEMPORAL         : The user is asking about the current date, time, day, or how long ago something was.
-- GENERAL_KNOWLEDGE: The user asks about real-world facts, people, politics, news, or events not related to the database (e.g. "who is the PM", "what is the capital of France").
-- CHAT             : General conversation, greetings, thanks, or small talk.
+- SQL_QUERY          : User wants data, reports, counts, lists, or analysis from the database.
+- SCHEMA_INFO        : User asks about table names, database structure, or what tables exist.
+- SCHEMA_EXPLANATION : User asks what a specific column, field, or metric means or represents.
+                       Examples: "what is ssc_p", "explain ai_adoption_level", "what does salary mean"
+- DESCRIBE           : User wants a plain English overview of what a dataset or table contains.
+- TEMPORAL           : User asks about current date, time, day, or how long ago something was.
+- GENERAL_KNOWLEDGE  : User asks about real-world facts, people, politics, news, or events not in the database.
+- CHAT               : Greetings, thanks, small talk, or conversational messages.
 
-Reply with ONLY one word from the list above. No explanation, no punctuation."""),
+Reply with ONLY one word. No explanation."""),
     ("human", "{user_query}")
 ])
 
@@ -335,7 +368,8 @@ def build_intent_chain():
 
 _intent_chain = build_intent_chain()
 
-VALID_INTENTS = {"CHAT", "SQL_QUERY", "SCHEMA_INFO", "DESCRIBE", "TEMPORAL", "GENERAL_KNOWLEDGE"}
+VALID_INTENTS = {"CHAT", "SQL_QUERY", "SCHEMA_INFO", "SCHEMA_EXPLANATION",
+                 "DESCRIBE", "TEMPORAL", "GENERAL_KNOWLEDGE"}
 
 
 def llm_classify_intent(user_query: str) -> str:
@@ -414,6 +448,11 @@ if __name__ == "__main__":
         ("Can you explain the data?", "DESCRIBE"),
         ("I'm new to this, help me understand", "DESCRIBE"),
         ("What kind of questions can I ask?", "DESCRIBE"),
+        ("give me overview of placement data", "DESCRIBE"),
+
+        # SCHEMA_EXPLANATION
+        ("What is ssc_p?", "SCHEMA_EXPLANATION"),
+        ("What does ai_adoption_level mean?", "SCHEMA_EXPLANATION"),
 
         # SQL_QUERY — universal signals
         ("Show me the top 5 records", "SQL_QUERY"),

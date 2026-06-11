@@ -4,6 +4,7 @@ workflow/query_executor.py
 Production-grade SQL execution engine using SQLAlchemy.
 """
 
+import re
 import time
 import logging
 from typing import Dict, Any
@@ -40,9 +41,6 @@ def enforce_row_limit(sql_query: str) -> str:
             flags=re.IGNORECASE
         )
     return sql_query
-
-
-import re
 
 
 def serialize_dataframe(dataframe: pd.DataFrame) -> Dict[str, Any]:

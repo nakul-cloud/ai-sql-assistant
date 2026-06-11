@@ -1,4 +1,5 @@
 import os
+import re
 # Warm up PyTorch & embedding model BEFORE loading SQL Server drivers / pyodbc
 # to prevent the Windows OpenMP/pyodbc thread collision crash.
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -248,6 +249,101 @@ Standalone Question:""")
 _contextualize_chain = CONTEXTUALIZE_PROMPT | get_llm(temperature=0.0) | StrOutputParser()
 
 
+def handle_schema_explanation_query(user_query: str) -> Dict[str, Any]:
+    """
+    Handles 'what is column_name?' type questions.
+    Looks up column metadata and semantic description — no SQL execution.
+    """
+    logger.info(f"Handling SCHEMA_EXPLANATION query: '{user_query}'")
+    try:
+        from database.schema_manager import fetch_database_metadata
+        from indexing.semantic_description import get_column_descriptions
+
+        metadata_list = fetch_database_metadata()
+
+        # Find which column the user is asking about
+        q_lower = user_query.lower()
+        matched_col = None
+        matched_table = None
+        col_semantic_desc = None
+
+        for meta in metadata_list:
+            col_descs = get_column_descriptions(meta["table_name"])
+            for col in meta["columns"]:
+                col_name = col["name"].lower()
+                col_name_spaced = col_name.replace("_", " ")
+                # Check for exact word matching to avoid false positives (e.g. matching 'ssc_p' inside 'hsc_p')
+                col_pattern = r"\b" + re.escape(col_name) + r"\b"
+                col_spaced_pattern = r"\b" + re.escape(col_name_spaced) + r"\b"
+                if re.search(col_pattern, q_lower) or re.search(col_spaced_pattern, q_lower):
+                    matched_col = col
+                    matched_table = meta["table_name"]
+                    col_semantic_desc = col_descs.get(col["name"], "")
+                    break
+            if matched_col:
+                break
+
+        if matched_col:
+            # Build a plain English explanation using metadata
+            from llm.llm_client import get_llm
+            from langchain_core.prompts import ChatPromptTemplate
+            from langchain_core.output_parsers import StrOutputParser
+
+            EXPLAIN_PROMPT = ChatPromptTemplate.from_messages([
+                ("system", """You are a data analyst explaining a database column to a business user.
+Explain what the column means in plain English. Be concise — 2-3 sentences max.
+Use the column name, data type, and semantic description provided.
+Do not mention SQL, databases, or technical implementation details.
+If sample values are provided, use them to make the explanation concrete."""),
+                ("human", """Column name: {col_name}
+Data type: {col_type}
+Table it belongs to: {table_name}
+Semantic description: {semantic_desc}
+Sample values: {sample_values}
+
+Explain this column in plain English:""")
+            ])
+
+            sample_vals = ""
+            for meta in metadata_list:
+                if meta["table_name"] == matched_table:
+                    sv = meta.get("sample_values", {}).get(matched_col["name"], [])
+                    sample_vals = str(sv[:5]) if sv else "Not available"
+                    break
+
+            chain = EXPLAIN_PROMPT | get_llm(temperature=0.2) | StrOutputParser()
+            explanation = chain.invoke({
+                "col_name": matched_col["name"],
+                "col_type": matched_col.get("display_type", matched_col.get("type", "unknown")),
+                "table_name": matched_table,
+                "semantic_desc": col_semantic_desc or "No description available",
+                "sample_values": sample_vals
+            })
+
+            return {
+                "success": True,
+                "intent": "SCHEMA_EXPLANATION",
+                "cache_hit": False,
+                "nl_response": explanation.strip(),
+                "generated_sql": None,
+                "query_result": {}
+            }
+
+        else:
+            # Column not found — fall back to schema info handler
+            logger.info("Column not found for SCHEMA_EXPLANATION — falling back to SCHEMA_INFO.")
+            return handle_schema_info_query(user_query)
+
+    except Exception as e:
+        logger.exception("Failed to handle schema explanation.")
+        return {
+            "success": False,
+            "intent": "SCHEMA_EXPLANATION",
+            "error": str(e),
+            "nl_response": "I couldn't find information about that column. Try asking 'what columns are available?' to see what's in the database."
+        }
+
+
 def needs_contextualization(query: str) -> bool:
     """
     Dynamically determines if a follow-up query is context-dependent or self-contained.
@@ -365,6 +461,11 @@ def process_user_query(
         
     elif intent == "SCHEMA_INFO":
         res = handle_schema_info_query(active_query, stream=stream)
+        res["rephrased_query"] = active_query
+        return res
+
+    elif intent == "SCHEMA_EXPLANATION":
+        res = handle_schema_explanation_query(active_query)
         res["rephrased_query"] = active_query
         return res
 

@@ -52,6 +52,8 @@ If a column or table does not exist in the schema, do not invent it.
 
 ── T-SQL SYNTAX RULES ────────────────────────────────────────────────────────
 - Use TOP instead of LIMIT.
+- For overview, summary, or "give me an idea of" queries, use TOP 100 minimum. Never use TOP 1 or TOP 5 unless the user explicitly asks for a single record or the question is clearly asking for a single best/worst value.
+- TOP 1 is only appropriate for: "which company has the highest X", "who has the most X", "what is the maximum X" — single best/worst queries only.
 - DISTINCT must come before TOP: SELECT DISTINCT TOP 10 ... NOT SELECT TOP 10 DISTINCT ...
 - Never use SELECT *. Always list required columns explicitly.
 - Use proper table aliases (e.g. e for employees, o for orders).
