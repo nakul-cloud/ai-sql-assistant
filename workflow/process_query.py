@@ -325,6 +325,17 @@ def contextualize_query(user_query: str, chat_history: list) -> str:
     return user_query
 
 
+def _format_history_for_nl(chat_history: list) -> str:
+    if not chat_history:
+        return "None"
+    turns = []
+    for msg in chat_history[-4:]:  # last 4 messages only
+        role = "User" if msg["role"] == "user" else "Assistant"
+        content = msg["content"][:300] + "..." if len(msg["content"]) > 300 else msg["content"]
+        turns.append(f"{role}: {content}")
+    return "\n".join(turns)
+
+
 def process_user_query(
     user_query: str,
     focus_tables: list = None,
@@ -475,11 +486,18 @@ def process_user_query(
     query_result = exec_res["result"]
     
     # Enrich the result for the LLM
-    enriched_result = enrich_sql_result(query_result)
+    enriched_result = enrich_sql_result(query_result, sql_query=sql_query)
     
     # Generate Natural Language Insights using the enriched profile
+    chat_hist_str = _format_history_for_nl(chat_history)
     if stream:
-        nl_res = generate_natural_language_response(active_query, sql_query, enriched_result, stream=True)
+        nl_res = generate_natural_language_response(
+            active_query,
+            sql_query,
+            enriched_result,
+            chat_history_str=chat_hist_str,
+            stream=True
+        )
         raw_stream = nl_res["response_text"]
 
         def cached_stream_wrapper(strm, q, q_res):
@@ -503,7 +521,13 @@ def process_user_query(
             "nl_response": cached_stream_wrapper(raw_stream, active_query, query_result)
         }
 
-    nl_res = generate_natural_language_response(active_query, sql_query, enriched_result, stream=False)
+    nl_res = generate_natural_language_response(
+        active_query,
+        sql_query,
+        enriched_result,
+        chat_history_str=chat_hist_str,
+        stream=False
+    )
     nl_response = nl_res["response_text"]
     
     # Store result in cache

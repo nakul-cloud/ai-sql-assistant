@@ -44,6 +44,29 @@ torch.set_num_threads(1)
 _model = None
 
 
+def _load_model_resource():
+    """Actually load BGE-M3 model and run warmup."""
+    from FlagEmbedding import BGEM3FlagModel
+    model = BGEM3FlagModel(
+        EMBEDDING_MODEL,
+        use_fp16=False,
+        devices="cpu"
+    )
+    # Warm up the PyTorch compilation and thread pool for CPU execution
+    model.encode(["warmup"], return_dense=True, return_sparse=True, return_colbert_vecs=False)
+    return model
+
+
+try:
+    import streamlit as st
+    @st.cache_resource
+    def _get_streamlit_cached_model():
+        print(f"[INFO] Loading BAAI/bge-m3 embedding model inside Streamlit cache...")
+        return _load_model_resource()
+except (ImportError, AttributeError):
+    pass
+
+
 def get_model(force: bool = False):
     """
     Load and return the BAAI/bge-m3 model (singleton).
@@ -55,23 +78,21 @@ def get_model(force: bool = False):
     if EMBEDDING_PROVIDER != "local" and not force:
         return None
 
+    # Try to use Streamlit's cache if running under Streamlit
+    try:
+        import streamlit as st
+        if st.runtime.exists():
+            return _get_streamlit_cached_model()
+    except (ImportError, AttributeError):
+        pass
+
     if _model is not None:
         return _model
 
     print(f"[INFO] Loading embedding model: {EMBEDDING_MODEL} ...")
     start = time.time()
 
-    # Import locally to avoid crashing if local PyTorch/FlagEmbedding is broken but fallbacks are available
-    from FlagEmbedding import BGEM3FlagModel
-
-    _model = BGEM3FlagModel(
-        EMBEDDING_MODEL,
-        use_fp16=False,
-        devices="cpu"
-    )
-    
-    # Warm up the PyTorch compilation and thread pool for CPU execution
-    _model.encode(["warmup"], return_dense=True, return_sparse=True, return_colbert_vecs=False)
+    _model = _load_model_resource()
 
     elapsed = time.time() - start
     print(f"[OK] Model loaded and warmed up in {elapsed:.1f}s")

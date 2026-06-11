@@ -66,6 +66,11 @@ If a column or table does not exist in the schema, do not invent it.
 - Text/name searches: use LIKE '%value%' across all relevant string columns.
 - Aggregations: use GROUP BY with all non-aggregated columns in SELECT.
 - Sorting: always add ORDER BY for top-N queries or when the question implies ranking.
+- Comparative & Filter Queries: When the question filters on or asks about a specific category, industry, or entity (e.g., "What about Healthcare?", "How is Finance doing?"), do NOT just retrieve that single row. Write a query (e.g., using subqueries, window functions, or CTEs) that retrieves the target metrics alongside overall table aggregates like the average, maximum, or ranking across all entities, so the response generator has immediate comparative context.
+  *Example*: For "What about Healthcare?", instead of generating:
+    `SELECT industry, adoption FROM dbo.ai_adoption WHERE industry = 'Healthcare';`
+  Generate a query like:
+    `WITH Stats AS (SELECT industry, adoption, RANK() OVER (ORDER BY adoption DESC) as rnk FROM dbo.ai_adoption) SELECT industry, adoption, rnk, (SELECT AVG(adoption) FROM dbo.ai_adoption) as avg_adoption FROM Stats WHERE industry = 'Healthcare';`
 - Column mapping precision: Pay close attention to column names and types in the schema. Do not map 'role' or 'job title' to 'seniority_level' or other unrelated columns if a more specific column like 'job_title' or similar name is present. Examine all columns carefully.
 - Match natural terms precisely: If a user asks for "role", "title", or "job", check the schema for columns containing "role", "title", "job", "position", or "occupation". Do not select "seniority" or "department" to represent the "role" unless no title/role columns exist.
 - Handling "demand" / "popularity": Map "demand", "popularity", or "market growth" of an entity/category to its record count (COUNT(*)) or frequency.

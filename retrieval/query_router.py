@@ -66,14 +66,14 @@ SCHEMA_PATTERNS = [
 # Dataset overview — domain-agnostic
 # Dataset overview — domain-agnostic
 DESCRIBE_PATTERNS = [
-    r"\b(explain|describe|tell\s+me\s+about|give\s+me\s+an?\s+overview|summarize|sumarize|summarise|sumarise)\b.*\b(dataset|data|table|this|it|trend|trends)\b",
-    r"\bwhat\s+(is|are|does|do)\b.*\b(dataset|data|table)\b.*\b(about|contain|have|include|show|represent|track|cover|purpose)\b",
+    r"\b(explain|describe|tell\s+me\s+about|give\s+me\s+an?\s+overview|summarize|sumarize|summarise|sumarise)\b.*\b(datasets?|data|tables?|this|it|trend|trends)\b",
+    r"\bwhat\s+(is|are|does|do)\b.*\b(datasets?|data|tables?)\b.*\b(about|contain|have|include|show|represent|track|cover|purpose)\b",
     r"\b(i\s+don'?t\s+know|new\s+to\s+this|unfamiliar|no\s+idea|help\s+me\s+understand)\b",
     r"\bwhat\s+kind\s+of\s+(data|information|questions?)\b",
     r"\bwhat\s+can\s+(i|we|you)\s+(ask|query|find|look\s+up)\b",
-    r"\bwhat\s+is\s+this\s+(data|dataset|table)\s+about\b",
-    r"\b(move\s+to|switch\s+to|change\s+to|focus\s+on|look\s+at|tell\s+me\s+about|show\s+me|show)\s+(the\s+)?([\w\s]+)?\b(dataset|data|table)\b",
-    r"\b(summarize|sumarize|summarise|sumarise|explain|describe)\b\s+(the\s+)?([\w\s]+)?\b(dataset|data|table|trend|trends)\b",
+    r"\bwhat\s+is\s+this\s+(data|datasets?|tables?)\s+about\b",
+    r"\b(move\s+to|switch\s+to|change\s+to|focus\s+on|look\s+at|tell\s+me\s+about|show\s+me|show)\s+(the\s+)?([\w\s]+)?\b(datasets?|data|tables?)\b",
+    r"\b(summarize|sumarize|summarise|sumarise|explain|describe)\b\s+(the\s+)?([\w\s]+)?\b(datasets?|data|tables?|trend|trends)\b",
 ]
 
 # General knowledge and politics (off-topic queries)
@@ -123,6 +123,7 @@ def _load_schema_terms() -> dict:
     {
         "table_names": ["employees", "sales", "tickets", ...],
         "column_names": ["salary", "revenue", "status", ...],
+        "sample_values": ["female", "male", "engineering", ...],
         "all_terms": ["employees", "salary", "revenue", ...]  # combined, deduplicated
     }
     """
@@ -132,6 +133,7 @@ def _load_schema_terms() -> dict:
 
         table_names = []
         column_names = []
+        sample_values = []
 
         for meta in metadata_list:
             # Clean table name: "dbo.csv_employees" → "employees"
@@ -152,6 +154,14 @@ def _load_schema_terms() -> dict:
                     # Also add underscore version
                     column_names.append(col.get("name", "").lower())
 
+            # Extract text sample values dynamically
+            for col_name, vals in meta.get("sample_values", {}).items():
+                for val in vals:
+                    val_str = str(val).strip().lower()
+                    # Skip empty values, short terms, and purely numeric/float values
+                    if val_str and len(val_str) > 1 and not val_str.replace('.', '', 1).isdigit():
+                        sample_values.append(val_str)
+
         # Deduplicate preserving order
         seen = set()
         unique_tables = []
@@ -168,17 +178,19 @@ def _load_schema_terms() -> dict:
                 unique_cols.append(c)
 
         all_terms = list(set(unique_tables + unique_cols))
+        unique_samples = list(set(sample_values))
 
-        logger.info(f"Schema terms loaded: {len(unique_tables)} tables, {len(unique_cols)} columns.")
+        logger.info(f"Schema terms loaded: {len(unique_tables)} tables, {len(unique_cols)} columns, {len(unique_samples)} sample values.")
         return {
             "table_names": unique_tables,
             "column_names": unique_cols,
+            "sample_values": unique_samples,
             "all_terms": all_terms
         }
 
     except Exception as e:
         logger.warning(f"Could not load schema terms for dynamic routing: {e}")
-        return {"table_names": [], "column_names": [], "all_terms": []}
+        return {"table_names": [], "column_names": [], "sample_values": [], "all_terms": []}
 
 
 @lru_cache(maxsize=1)
@@ -265,8 +277,23 @@ def pre_check_intent(user_query: str) -> Optional[str]:
     # ── 5. DESCRIBE ───────────────────────────────────────────────────────────
     for pattern in DESCRIBE_PATTERNS:
         if re.search(pattern, q, re.IGNORECASE):
-            logger.debug(f"DESCRIBE match: '{q}'")
-            return "DESCRIBE"
+            # Bypass DESCRIBE if the query indicates subset filtering or data aggregation
+            bypass_describe = False
+            if re.search(r"\b(only|where|having|when|by|for|who|whose|which|with|vs|versus|compare|comparison|difference|between)\b", q):
+                if not re.search(r"\b(move|switch|change|focus)\b", q):
+                    bypass_describe = True
+            
+            # Dynamic check: if query mentions any known categorical/text sample value from the database, bypass DESCRIBE
+            terms = _load_schema_terms()
+            for val in terms.get("sample_values", []):
+                # Search value as a whole word to prevent partial matching (e.g. "it" in "split")
+                if re.search(r"\b" + re.escape(val) + r"\b", q):
+                    bypass_describe = True
+                    break
+            
+            if not bypass_describe:
+                logger.debug(f"DESCRIBE match: '{q}'")
+                return "DESCRIBE"
 
     # ── 6. SQL_QUERY — universal signals ─────────────────────────────────────
     for pattern in UNIVERSAL_SQL_PATTERNS:

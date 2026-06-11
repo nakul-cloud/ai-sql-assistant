@@ -189,24 +189,13 @@ def fetch_single_table(table_name: str, schema: str = "dbo") -> dict | None:
 _metadata_cache = None
 
 
-def fetch_database_metadata(force_refresh: bool = False) -> list[dict]:
-    """
-    Fetch metadata for ALL user tables in the database.
-    Caches results to prevent redundant database queries on Streamlit reloads.
-    """
-    global _metadata_cache
-    if _metadata_cache is not None and not force_refresh:
-        return _metadata_cache
-
-    if force_refresh:
-        fetch_single_table.cache_clear()
-
+def _fetch_metadata_from_db() -> list[dict]:
+    """Extract table and column metadata directly from the SQL Server database."""
     engine = get_engine()
     metadata_list = []
 
     with engine.connect() as conn:
         tables = _get_all_table_names(conn)
-
         print(f"[INFO] Found {len(tables)} tables in database.")
 
         for i, tbl in enumerate(tables, 1):
@@ -237,8 +226,49 @@ def fetch_database_metadata(force_refresh: bool = False) -> list[dict]:
                 continue
 
     print(f"\n[OK] Extracted metadata for {len(metadata_list)}/{len(tables)} tables.")
-    _metadata_cache = metadata_list
     return metadata_list
+
+
+try:
+    import streamlit as st
+    @st.cache_data(ttl=3600)  # cache schema metadata for 1 hour to avoid DB calls
+    def _get_streamlit_cached_metadata():
+        print("[INFO] Fetching database metadata inside Streamlit cache...")
+        return _fetch_metadata_from_db()
+except (ImportError, AttributeError):
+    pass
+
+
+def fetch_database_metadata(force_refresh: bool = False) -> list[dict]:
+    """
+    Fetch metadata for ALL user tables in the database.
+    Caches results to prevent redundant database queries on Streamlit reloads.
+    """
+    global _metadata_cache
+
+    if force_refresh:
+        fetch_single_table.cache_clear()
+        try:
+            import streamlit as st
+            if st.runtime.exists():
+                _get_streamlit_cached_metadata.clear()
+        except (ImportError, AttributeError):
+            pass
+        _metadata_cache = None
+
+    # Try to use Streamlit's cache if running under Streamlit
+    try:
+        import streamlit as st
+        if st.runtime.exists():
+            return _get_streamlit_cached_metadata()
+    except (ImportError, AttributeError):
+        pass
+
+    if _metadata_cache is not None:
+        return _metadata_cache
+
+    _metadata_cache = _fetch_metadata_from_db()
+    return _metadata_cache
 
 
 # ── Standalone test ──────────────────────────────────────────────────
