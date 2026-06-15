@@ -99,6 +99,69 @@ Test the components from the project root:
 
 ---
 
+## 🔄 Advanced Query Transformations
+
+Before feeding the user's natural language question into the SQL generation chain, the system applies three query transformation patterns defined in `llm/query_transformer.py`:
+
+### 1. Query Decomposition (Splitting Compound Intent)
+* **Goal**: Handle complex queries that ask for multiple different metrics at once.
+* **Mechanism**: A fast pre-check heuristic (`_has_compound_signals`) scans the query for conjunctions (`and`, `but`, `as well as`). If found, a ChatGroq-backed LCEL chain splits the query into standalone sub-questions.
+* **Example**: 
+  - *Input*: "Show me total sales for 2026, and who is the manager of HR department?"
+  - *Decomposed Outputs*: 
+    1. "What are the total sales for 2026?"
+    2. "Who is the manager of the HR department?"
+  - *Result*: The orchestrator runs both sub-questions through retrieval and SQL execution individually, then merges the final statistical insights in the response.
+
+### 2. Schema Alignment & Synonym Rewriting
+* **Goal**: Correct mapping between colloquial business terms and real database schema columns.
+* **Mechanism**: If `_needs_rewrite` detects synonyms or slang terms, the rewriter maps these entities to the exact schema attributes using synonyms configured in metadata.
+* **Example**:
+  - *Input*: "list all our workers in California"
+  - *Rewritten Output*: "List all rows in dbo.csv_employees where state is CA" (aligning "workers" to `dbo.csv_employees` and "California" to `state`).
+
+### 3. Step-Back Prompting (Abstraction)
+* **Goal**: Retrieve high-level baseline context to prevent data isolation in narrow filter queries.
+* **Mechanism**: If `_might_need_stepback` detects a query focusing on a single entity or category (e.g. Sales, Technology, Male), it generates a broader step-back question to extract total/average benchmarks.
+* **Example**:
+  - *Input*: "What is the average salary of the Sales department?"
+  - *Step-Back Query*: "What is the average salary across all departments?"
+  - *Result*: The SQL generator writes queries to fetch both metrics, allowing the response generator to state: *"The Sales department average salary is 95,000, which is higher than the overall company average of 82,000."*
+
+---
+
+## ✍️ Types of Prompting in This Project
+
+We utilize specialized prompting paradigms across the LLM chains to guarantee structured outputs and safe database interactions:
+
+### 1. Persona-Driven Role Prompting
+* **Usage**: In `query_ai.py` (`SQL_PROMPT`) and `response_generator.py` (`NL_PROMPT`).
+* **Concept**: Tells the LLM exactly what role it plays, which alters its tone and vocabulary constraints.
+* **Instruction**: 
+  - *"You are a senior Microsoft SQL Server (T-SQL) engineer working on a business intelligence system."*
+  - *"You are a production-grade AI Analytics Copilot... explain findings conversationally."*
+
+### 2. Grounded Few-Shot Prompting
+* **Usage**: Guides SQL generation for edge cases (e.g., aggregations vs. previews) and guides NL responses on formatting.
+* **Concept**: Provides concrete examples of inputs and expected outputs to set the standard for parsing.
+* **Instruction**: 
+  - In SQL generation, examples demonstrate that overview/summary queries (e.g., *"what does this dataset tell us"*) must generate standard aggregations (e.g., `SELECT COUNT(*), AVG(x)`) *without* using a `TOP` clause.
+  - In NL response generation, examples show how to formulate comparative answers utilizing natural pronouns.
+
+### 3. Negative Constraints (Strict Guardrails & Refusals)
+* **Usage**: Enforces security, privacy, and accuracy.
+* **Concept**: Specifies exactly what the LLM is prohibited from generating.
+* **Instruction**:
+  - In SQL generation: *"Only SELECT statements. Never generate: DROP, DELETE, TRUNCATE, ALTER..."* and *"If a column does not exist, do not invent it."*
+  - In NL response: *"Strictly avoid phrases like: 'this suggests...', 'this may indicate...'"* and *"Do NOT assume or inject any currency symbols."*
+
+### 4. Comparative & Context-Aware Prompting
+* **Usage**: Directs the query generator to construct advanced queries with window functions and CTEs.
+* **Concept**: Ensures filtered queries gather relative statistics for context.
+* **Instruction**: *"When the question filters on a specific category... do NOT just retrieve that single row. Write a query that retrieves the target metrics alongside overall table aggregates (average, maximum, rank)..."*
+
+---
+
 ## 🔗 LangChain Expression Language (LCEL)
 
 LCEL is a simple way to glue different AI components together using the pipe operator (`|`), just like unix terminal commands (`cat file.txt | grep "error"`).

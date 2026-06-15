@@ -103,11 +103,15 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    U["User Question"] --> R["Regex Pre-Check\n~0ms"]
+    U["User Question"] --> MEM_GET["mem0 AI\nRetrieve Past Facts"]
+    MEM_GET --> CONTEXT{"Is Follow-Up?"}
+    CONTEXT -->|"Yes"| REPHRASE["Rephrase Query\nvia ChatGroq"]
+    CONTEXT -->|"No"| ROUTER["Regex Pre-Check\n~0ms"]
+    REPHRASE --> ROUTER
 
-    R -->|"obvious chat"| CHAT["General Chat Response"]
-    R -->|"obvious SQL"| QC
-    R -->|"ambiguous"| IC["LLM Intent Classifier\n~300ms"]
+    ROUTER -->|"obvious chat"| CHAT["General Chat Response"]
+    ROUTER -->|"obvious SQL"| QC
+    ROUTER -->|"ambiguous"| IC["LLM Intent Classifier\n~300ms"]
 
     IC -->|"SQL query"| QC["Query Cache\nCosine Similarity Check"]
     IC -->|"chat"| CHAT
@@ -116,15 +120,17 @@ flowchart TD
     QC -->|"cache MISS"| HR["Hybrid Retriever\nRRF Fusion"]
 
     HR --> SCB["Schema Context Builder\ntop 3 tables"]
-    SCB --> SQLG["SQL Generator\nLangChain ChatGroq"]
+    SCB --> TRANS["Query Transformation\nDecompose/Rewrite/Step-back"]
+    TRANS --> SQLG["SQL Generator\nLangChain ChatGroq"]
     SQLG --> VAL["SQL Validator\nSELECT-only guard"]
     VAL --> EXEC["SQL Server\nQuery Execution"]
     EXEC -->|"Success"| ENR["Semantic Result Enricher\nmetadata, averages, counts"]
     EXEC -->|"Failure"| AGENT["Autonomous SQL Agent\nllama-3.3-70b-versatile"]
-    ENR --> NL["NL Response Generator\nLangChain ChatGroq\nwith conversational memory"]
+    ENR --> NL["NL Response Generator\nLangChain ChatGroq\nwith mem0 context"]
     AGENT --> NL
-    NL --> STORE["Store in Query Cache"]
-    STORE --> ANS2["User sees Answer + Table"]
+    NL --> STORE_MEM["mem0 AI\nAsync Store Fact"]
+    STORE_MEM --> STORE_CACHE["Store in Query Cache"]
+    STORE_CACHE --> ANS2["User sees Answer + Table"]
 
     style U fill:#2563eb,color:#fff
     style HR fill:#9333ea,color:#fff
@@ -132,6 +138,8 @@ flowchart TD
     style AGENT fill:#f59e0b,color:#000
     style ANS1 fill:#16a34a,color:#fff
     style ANS2 fill:#16a34a,color:#fff
+    style MEM_GET fill:#0ea5e9,color:#fff
+    style STORE_MEM fill:#0ea5e9,color:#fff
 ```
 
 ### Indexing Trigger Logic
@@ -334,6 +342,27 @@ python -m llm.langchain_agent          # Test autonomous SQL tool-calling agent
 8. **Semantic Enrichment**: Analyzes results using Pandas to generate statistical summaries, check for truncation or count structures, and fetch global average baseline values.
 9. **NL Response**: Generates a conversational summary grounded strictly on evidence, enforcing currency limitations, speculation blocking, and isolation boundaries.
 10. **Persistence**: Asynchronously logs extracted facts into the mem0 Cloud memory, and stores the query result in the Qdrant query cache.
+
+---
+
+## ⚡ Advanced Query Transformations & Prompting (Overview)
+
+To bridge the gap between business speech and database columns, the system utilizes two core concepts:
+
+### 1. Advanced Query Transformations
+Before translating your question into SQL, the assistant optimizes it using three methods:
+* **Query Decomposition**: If you ask two questions at once (e.g. *"Show me total employees and also manager names"*), the AI splits it into separate queries, runs them, and joins the final summaries together.
+* **Schema Alignment (Rewriting)**: Maps slang or synonyms to exact database columns (e.g., rewriting *"workers"* to refer to the `dbo.csv_employees` table).
+* **Step-Back Prompting**: For hyper-specific questions (e.g. *"How did Sales do?"*), the system generates a broader step-back query (e.g. *"What is the aggregate metric across all departments?"*) so it can compare the target against the average.
+
+### 2. Prompting Strategies & Guardrails
+The system steers LLM completions using precise, structured instructions:
+* **Role-Based Persona**: Establishes strict authority (e.g., *"You are a senior Microsoft SQL Server T-SQL engineer"*).
+* **Few-Shot Examples**: Embeds real-world input-output demonstrations directly in the prompts to show the AI how to format aggregates or ground responses.
+* **Negative Constraints**: Blocks bad actions explicitly (e.g., SELECT-only statements, no currency assumptions, no speculation).
+* **Comparative Context Queries**: Directs the LLM to format SQL with CTEs and OVER clauses to gather baseline totals and percentages, avoiding single-entity data isolation.
+
+*For full prompt template details and query transformer structures, check the **[PROMPTING.md](file:///d:/ai-sql-assistant/PROMPTING.md)** guide.*
 
 ---
 
