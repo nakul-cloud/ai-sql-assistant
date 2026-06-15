@@ -25,27 +25,43 @@ flowchart LR
 ## File Registry
 
 ### 0. `llm_client.py`
-Provides the shared, cached `get_llm()` model provider using LangChain's `ChatGroq` wrapper. Uses a lazy-initialized singleton for raw completions (`generate_text`) to preserve offline indexing functionality.
+Provides the shared, cached `get_llm()` model provider using LangChain's `ChatGroq` wrapper. Uses a lazy-initialized singleton for raw completions (`generate_text`) to preserve offline indexing functionality. It supports fallback chains: Primary is Groq, falling back to OpenAI (GPT-4o-mini), and then Gemini (1.5 Flash).
 
-### 1. `query_ai.py`
-Generates SQL queries from user questions using LangChain's ChatPromptTemplate and LCEL:
-- **Prompt Isolation**: Directs the LLM using SQL Server instructions (e.g., using `TOP` instead of `LIMIT`, referencing specific schema columns).
+### 1. `query_transformer.py`
+Implements an **Advanced Query Transformation** layer that optimizes natural language inputs before they hit table retrieval or SQL generation. It applies three sequential strategies:
+- **Query Decomposition**: Splits complex compound questions (e.g. joined by "and") into independent standalone sub-queries using LLM semantic parsing.
+- **Query Rewriting (Schema Alignment)**: Maps colloquial terms to actual database schema vocabulary (e.g., matching synonyms) by examining active schema terms.
+- **Step-Back Prompting**: Automatically generates a broader comparative search query for narrow, single-entity filters (e.g., "what about Healthcare?" -> "what is the AI adoption rate across all industries?") to provide background baseline metrics.
+
+### 2. `query_ai.py`
+Generates T-SQL queries from user questions using LangChain's ChatPromptTemplate and LCEL:
+- **Prompt Isolation**: Directs the LLM using SQL Server T-SQL syntax guidelines (e.g., using `TOP` instead of `LIMIT`, referencing specific schema columns, wrapping spaces/reserved words in brackets).
+- **Aggregate Rules**: Implements strict rules to generate table-wide aggregates without `TOP` clauses for overview/summary questions (e.g. "what does this dataset tell us?").
 - **Output Sanitization**: Removes markdown formatting block tags (e.g. ` ```sql `) to produce clean SQL statements ready for execution.
 - **SQL Validator (Security Guardrail)**: Checks generated SQL query blocks against security rules before running them on SQL Server:
-  - **SELECT-Only Enforcement**: Ensures queries start with `SELECT`. Rejects updates, inserts, and deletions.
+  - **SELECT-Only Enforcement**: Ensures queries start with `SELECT` or `WITH`. Rejects updates, inserts, and deletions.
   - **Single Statement Enforcement**: Rejects queries with semicolons `;` that attempt to run multiple statements.
   - **Keyword Blocklist**: Filters out commands like `DROP`, `TRUNCATE`, `ALTER`, `EXEC`, and `CREATE`.
   - **Procedure Blocklist**: Blocks critical system stored procedures (e.g., `xp_cmdshell`, `sp_executesql`, `openrowset`).
 
-### 2. `response_generator.py`
-Converts raw database results into clear, conversational summaries using LangChain:
+### 3. `response_generator.py`
+Converts database execution outcomes into clear, conversational summaries using LangChain:
 - **Analyst Persona**: Guides the model to output summaries focused on business metrics, avoiding database terminology and table names.
 - **Context Injection**: Ingests an enriched statistical profile (sums, means, unique counts) instead of raw datasets. This prevents token bloat and speeds up natural language generation.
-- **Grounded Interpretation & Memory**: Ingests the last 4 turns of conversation history for continuity. Uses query metadata (`is_truncated`, `is_count_query`, `table_total_rows`) to accurately describe previews versus scalar aggregates, and blocks speculative storytelling or arbitrary currency sign additions.
+- **Grounded Interpretation**: Bases response strictly on evidence. Blocks speculative storytelling, causation assumptions, or business impact projections.
+- **No Currency Assumptions**: Prevents the model from prepending any currency symbols (like `$`, `€`, `₹`) unless the schema explicitly contains currency units.
+- **Preview vs. Full-Dataset Claims**: Uses query metadata (`is_truncated`, `is_count_query`, `table_total_rows`) to accurately describe previews versus scalar aggregates. It ensures preview findings are never stated as full-dataset facts.
+- **Framing Isolation & Verbatim Controls**: Isolates prompt history to prevent carrying over past sample-size caveats and forbids verbatim text reuse from history to maintain freshly composed prose.
 
-### 3. `langchain_agent.py`
-Executes an autonomous SQL agent using LangChain's `create_sql_agent` with native tool-calling (`agent_type="tool-calling"`):
-- **Self-Healing**: Triggered automatically if normal execution fails or on request to discover columns, self-correct queries, and perform multi-step database reasoning.
+### 4. `describe_generator.py`
+Handles queries requesting details about specific datasets or database-wide summaries (e.g., "explain what this table is about"):
+- **Dataset Description**: Translates table columns, metadata, and semantic cache descriptions into plain business language (e.g., "ai_investment_usd" -> "AI spending") without running database queries.
+- **Database Overview**: Generates a high-level summary of all tables and approximate row counts.
+
+### 5. `langchain_agent.py`
+Executes an autonomous SQL agent fallback using LangChain's `create_sql_agent` with native tool-calling (`agent_type="tool-calling"`):
+- **Self-Healing**: Triggered automatically if standard T-SQL execution fails. It connects to the database engine, inspects metadata, corrects syntax, and executes queries autonomously to recover from errors.
+
 
 ---
 

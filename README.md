@@ -38,7 +38,9 @@ No SQL knowledge required. No manual table selection. Works across 100+ tables.
 | **Hybrid Search** | Qdrant RRF Fusion | Merges dense + sparse results |
 | **Query Cache** | Qdrant cosine similarity | Threshold: 0.92 |
 | **Description Cache** | Local JSON file | Hash-keyed by schema signature |
+| **Memory Layer** | mem0 Cloud API | Conversational memory, semantic fact extraction, context retrieval |
 | **Intent Router** | Regex + LangChain ChatGroq | Dynamic sample-value checking, LCEL fallback |
+| **Query Transformer**| LangChain LCEL + ChatGroq | Query decomposition, synonym rewriter, and step-back prompting |
 | **SQL Generation** | LangChain LCEL + ChatGroq | Structured SQL generation chain |
 | **Autonomous Agent** | LangChain SQL Agent | Tool-calling fallback for schema correction and query repair |
 | **Semantic Enricher** | Pandas + SQLAlchemy | Computes averages, previews/truncations, count query indicators |
@@ -202,8 +204,15 @@ ai-sql-assistant/
 │   └── result_enricher.py           #   Statistical summaries, previews, aggregates, count flags
 │
 ├── llm/
+│   ├── llm_client.py                #   Lazy-loaded ChatGroq with API fallbacks
+│   ├── query_transformer.py         #   Query decomposition, rewriting, step-back prompting
 │   ├── query_ai.py                  #   Groq SQL generation (comparative & windowed rules)
-│   └── response_generator.py        #   Groq NL response (grounded, currency controls, memory context)
+│   ├── response_generator.py        #   Groq NL response (grounded, currency controls, memory context)
+│   ├── describe_generator.py        #   Plain English table descriptions / database overviews
+│   └── langchain_agent.py           #   Autonomous SQL Agent self-correcting fallback
+│
+├── memory/                          # Conversational memory layer
+│   └── mem0_manager.py              #   mem0 Cloud client context management
 │
 ├── workflow/
 │   ├── process_query.py             #   End-to-end orchestration (history formatter)
@@ -295,25 +304,36 @@ python -m llm.langchain_agent          # Test autonomous SQL tool-calling agent
 ### Step 2 — Query Routing & Contextualization (Online)
 > Decides how to handle each user message.
 
-1. **Query Contextualization** — Rephrases follow-up queries using the last 4 turns of message history (e.g. resolving pronouns like "their" or "they").
-2. **Regex pre-check** — Catches greetings, thanks, obvious SQL patterns, or descriptions (~40% of messages, 0ms). Bypasses DESCRIBE routing if any dynamic schema text sample values (like categories, genders) are detected in the query.
-3. **LLM intent classifier** — Only called for ambiguous messages (~300ms).
-4. Routes to: `CHAT`, `SQL_QUERY`, `SCHEMA_INFO`, or `DESCRIBE`.
+1. **Query Contextualization**: Rephrases follow-up queries using facts retrieved from **mem0 Cloud** and conversational flow to make them self-contained standalone queries (e.g., resolving pronouns like "their" or "they").
+2. **Regex Pre-check**: Catches greetings, thanks, obvious SQL patterns, or descriptions (~40% of messages, 0ms). Bypasses LLM classification if direct matches occur.
+3. **Intent Router**: Ambiguous queries are classified by ChatGroq into:
+   - `CHAT`: General greeting/conversational talk.
+   - `SQL_QUERY`: Analytical queries requiring database execution.
+   - `SCHEMA_INFO`: Questions about database tables or overall catalog structures.
+   - `DESCRIBE`: Requests to summarize a table or the entire database.
+   - `DATA_PREVIEW`: Direct requests to see preview records.
+   - `SCHEMA_EXPLANATION`: Requests to explain column definitions (e.g., "what is ssc_p?").
+   - `CONVERSATION_SUMMARY`: Summarizing previous topics discussed using mem0 memory logs.
+   - `TEMPORAL` / `GENERAL_KNOWLEDGE`: Questions out of database/assistant scope.
 
 ### Step 3 — Query Execution & Response (Online)
-> Full pipeline for SQL-intent queries.
+> Full pipeline for analytical database queries.
 
-1. **Query cache check** — Cosine similarity > 0.92 returns cached answer instantly.
-2. **Hybrid retrieval** — RRF fusion of dense + sparse search, returns top 3 tables.
-3. **Schema context** — Builds a detailed prompt with column info + sample values.
-4. **SQL generation** — LangChain ChatGroq LCEL chain produces a SELECT query (incorporating comparative and global baseline query structures for filters).
-5. **Validation** — Ensures only SELECT statements pass through.
-6. **Execution & Fallback**:
-   - **Standard Path**: Runs the SQL query on SQL Server using connection pools.
-   - **Fallback Path**: If SQL execution fails, the **Autonomous LangChain SQL Agent** (`llama-3.3-70b-versatile`) is triggered to query schemas, repair syntax issues, and run the repaired query.
-7. **Semantic Enrichment** — Analyzes rows to build lightweight statistical profiles, dynamically querying global averages for point filters. It also flags count queries (`is_count_query`) and preview limits (`is_truncated`) by running dynamic database total counts.
-8. **NL response** — Summarizes enriched results in natural language utilizing conversational history, strict evidence grounding, currency controls, and preview/aggregate instructions.
-9. **Cache store** — Saves the query + response for future cache hits.
+1. **Query Cache Check**: Cosine similarity >= 0.92 against past cached questions returns cached responses instantly.
+2. **Advanced Query Transformations**:
+   - **Decomposition**: Splits compound questions into independent sub-queries.
+   - **Rewriting**: Maps colloquial business terms to correct database column names.
+   - **Step-Back Prompting**: Formulates a broader search query to retrieve baseline metrics for narrow entities.
+3. **Hybrid Retrieval**: RRF fusion of dense (BGE-M3) and sparse (BM25) vector searches in Qdrant, returning the top 3 tables.
+4. **Schema Context**: Formulates a schema context prompt containing table row counts, column types, primary keys, and distinct sample values.
+5. **SQL Generation**: LangChain ChatGroq LCEL chain generates a SELECT query applying comparative and windowed baseline guidelines.
+6. **Validation**: Inspects generated SQL block to enforce read-only SELECT/WITH statements and block semicolon injections.
+7. **Execution & Fallback**:
+   - **Standard Path**: Executes query against SQL Server using connection pools.
+   - **Fallback Path**: If standard SQL execution fails, the **Autonomous LangChain SQL Agent** (`llama-3.3-70b-versatile`) is triggered to inspect schemas, self-heal syntactical issues, and retrieve the correct results.
+8. **Semantic Enrichment**: Analyzes results using Pandas to generate statistical summaries, check for truncation or count structures, and fetch global average baseline values.
+9. **NL Response**: Generates a conversational summary grounded strictly on evidence, enforcing currency limitations, speculation blocking, and isolation boundaries.
+10. **Persistence**: Asynchronously logs extracted facts into the mem0 Cloud memory, and stores the query result in the Qdrant query cache.
 
 ---
 

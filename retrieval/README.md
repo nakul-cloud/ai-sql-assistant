@@ -58,8 +58,15 @@ Caches natural language responses in a separate Qdrant collection:
 | Intent | Routing Rule | Next Pipeline Step |
 |:---|:---|:---|
 | **`CHAT`** | Matches greetings, thank-you messages, and conversational text. | Simple Groq conversational response. |
-| **`SCHEMA_INFO`** | Matches questions asking about active tables, metadata, or table columns. | Schema context synthesis summarizing the database metadata. |
-| **`SQL_QUERY`** | Matches requests for statistics, aggregations, or list views. | Runs the hybrid retrieval, SQL generation, and database execution pipeline. |
+| **`SCHEMA_INFO`** | Inquiries about database tables, row counts, columns, or schemas. | Formats available metadata schema summaries via LLM. |
+| **`SQL_QUERY`** | Requests for statistics, aggregations, counts, or multi-table analytical results. | Runs retrieval, SQL generation, execution, enrichment, and NL response. |
+| **`DESCRIBE`** | Asks "what does this table show" or "summarize the database". | Direct English explanation of tables/schemas using cached definitions. |
+| **`DATA_PREVIEW`** | Requests to show/see/preview raw sample records of a table. | Generates `SELECT * FROM table` directly to show rows without LLM SQL generation. |
+| **`SCHEMA_EXPLANATION`**| Asks for a specific column's definition (e.g. "what is ssc_p?"). | Looks up column metadata + semantic descriptions and explains in plain English. |
+| **`CONVERSATION_SUMMARY`**| Requests a summary of what was previously discussed. | Synthesizes a conversational recap of facts stored in mem0 Cloud. |
+| **`TEMPORAL`** | Questions asking about today's date, current time, or current year. | Returns a helpful pre-defined temporal scope refusal message. |
+| **`GENERAL_KNOWLEDGE`** | Requests about people, news, external facts, or general knowledge. | Returns a helpful pre-defined general knowledge refusal message. |
+
 
 ---
 

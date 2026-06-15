@@ -1,6 +1,6 @@
 # 🛰️ API Flow & Integration Guide
 
-This document explains the end-to-end flow of **API calls** within the **AI SQL Analytics Assistant**. It breaks down how the orchestration layer coordinates calls between the user UI, the **Groq LLM API**, the **Qdrant Vector Database**, and **Microsoft SQL Server**.
+This document explains the end-to-end flow of **API calls** within the **AI SQL Analytics Assistant**. It breaks down how the orchestration layer coordinates calls between the user UI, the **mem0 Cloud API**, the **Groq LLM API**, the **Qdrant Vector Database**, and **Microsoft SQL Server**.
 
 ---
 
@@ -14,45 +14,73 @@ sequenceDiagram
     actor User
     participant App as Streamlit UI
     participant Orchestrator as process_query.py
+    participant mem0 as mem0 Cloud API
     participant Qdrant as Qdrant Vector DB
     participant Groq as Groq LLM API
     participant SQLServer as SQL Server Database
 
-    User->>App: Submits question (e.g. "what is Mkt&Fin?")
-    Note over App: Check Conversation History
-    App->>Orchestrator: process_user_query(query, history)
+    User->>App: Submits question (e.g. "what is their salary?")
+    App->>Orchestrator: process_user_query(query)
     
     rect rgb(30, 41, 59)
-        Note over Orchestrator, Groq: 1. Contextualize Query
-        Orchestrator->>Groq: API call to rephrase based on history
-        Groq-->>Orchestrator: Returns standalone query ("What is Mkt&Fin specialization?")
-    end
-
-    rect rgb(30, 59, 41)
-        Note over Orchestrator, Qdrant: 2. Fast Retrieve or Hybrid Search
-        Orchestrator->>Orchestrator: Run fast keyword match (0ms)
-        alt Cache Miss
-            Orchestrator->>Qdrant: Hybrid Search (Dense + Sparse)
-            Qdrant-->>Orchestrator: Returns top relevant tables
-        end
-    end
-
-    rect rgb(59, 30, 41)
-        Note over Orchestrator, Groq: 3. SQL Query Generation
-        Orchestrator->>Groq: Generate SQL API call (prompt + schema context)
-        Groq-->>Orchestrator: Returns raw SQL
+        Note over Orchestrator, mem0: 1. Contextualize Query (if follow-up)
+        Orchestrator->>mem0: Fetch semantic facts for user
+        mem0-->>Orchestrator: Returns history facts (e.g., "focusing on Employees table")
+        Orchestrator->>Groq: API call to rephrase using facts
+        Groq-->>Orchestrator: Returns standalone query ("what is the salary of employees?")
     end
 
     rect rgb(41, 59, 80)
-        Note over Orchestrator, SQLServer: 4. Execute Query
-        Orchestrator->>SQLServer: Run T-SQL query via SQLAlchemy
-        SQLServer-->>Orchestrator: Returns row datasets
+        Note over Orchestrator, Qdrant: 2. Semantic Cache Check
+        Orchestrator->>Qdrant: Check query_cache (similarity search)
+        alt Cache HIT (similarity >= 0.92)
+            Qdrant-->>Orchestrator: Returns cached NL response + records
+            Orchestrator-->>App: Bypasses downstream APIs
+        else Cache MISS
+            Qdrant-->>Orchestrator: Returns miss
+        end
     end
 
-    rect rgb(70, 70, 70)
-        Note over Orchestrator, Groq: 5. Generate Business Insights
-        Orchestrator->>Groq: API call to summarize data results
-        Groq-->>Orchestrator: Returns human-friendly text
+    alt Cache MISS
+        rect rgb(30, 59, 41)
+            Note over Orchestrator, Qdrant: 3. Schema Hybrid Retrieval
+            Orchestrator->>Qdrant: Query sql_table_schemas (Dense + Sparse RRF)
+            Qdrant-->>Orchestrator: Returns top 3 relevant table structures
+        end
+
+        rect rgb(59, 30, 41)
+            Note over Orchestrator, Groq: 4. SQL Query Generation
+            Orchestrator->>Groq: Generate SQL API call (schema context + query rules)
+            Groq-->>Orchestrator: Returns T-SQL SELECT query
+        end
+
+        rect rgb(70, 41, 90)
+            Note over Orchestrator, SQLServer: 5. Execute Query & Fallback
+            Orchestrator->>SQLServer: Run T-SQL query via SQLAlchemy
+            alt Query Execution Fails
+                Orchestrator->>Groq: Initialize SQL Agent tool-calling loop
+                Groq->>SQLServer: Inspect columns & run corrected query
+                SQLServer-->>Groq: Return self-healed results
+                Groq-->>Orchestrator: Return healed dataset
+            else Success
+                SQLServer-->>Orchestrator: Returns row datasets
+            end
+        end
+
+        rect rgb(70, 70, 70)
+            Note over Orchestrator, Groq: 6. Generate Business Insights
+            Orchestrator->>Groq: API call to summarize Pandas enriched profile
+            Groq-->>Orchestrator: Returns conversational response
+        end
+
+        rect rgb(90, 60, 30)
+            Note over Orchestrator, mem0: 7. Memory & Cache Sync (Async)
+            par Async Memory Store
+                Orchestrator->>mem0: Asynchronously store new conversation facts
+            and Async Cache Store
+                Orchestrator->>Qdrant: Asynchronously insert result into query_cache
+            end
+        end
     end
 
     Orchestrator-->>App: Return success payload
@@ -69,24 +97,62 @@ All API communication relies on configuration keys defined in your `.env` file:
 # Groq LLM Configuration
 GROQ_API_KEY=gsk_your_api_key_here
 GROQ_MODEL=llama-3.1-8b-instant
+GROQ_AGENT_MODEL=llama-3.3-70b-versatile
+
+# Fallback LLM Providers
+OPENAI_API_KEY=sk-proj-xxxx
+OPENAI_MODEL=gpt-4o-mini
+GEMINI_API_KEY=AIzaSyxxxx
+GEMINI_MODEL=gemini-1.5-flash
+
+# mem0 Conversational Memory Cloud API
+MEM0_API_KEY=m0-xxxx
+MEM0_USER_ID=default_user
 
 # Vector Store (Qdrant) Configuration
 QDRANT_HOST=localhost
 QDRANT_PORT=6333
 SCHEMA_COLLECTION=ai_sql_schema_index
+QUERY_CACHE_COLLECTION=ai_sql_query_cache
 
 # Relational Database (SQL Server) Configuration
-DB_SERVER=localhost
-DB_DATABASE=ai_sql_db
+SQL_SERVER=localhost\SQLEXPRESS
+SQL_DATABASE=ai_sql_assistant
+SQL_TRUSTED_CONNECTION=yes
 ```
 
 ---
 
 ## 🔍 Detailed Walkthrough of API Calls
 
-### 1. Rephrasing & Contextualization API
-* **Endpoint:** `https://api.groq.com/openai/v1/chat/completions` (via SDK client)
-* **Goal:** Convert conversational inputs (like *"what is that?"*) into self-contained search terms using context from recent turns.
+### 1. Conversational Memory APIs (mem0 Cloud)
+* **Fact Retrieval Endpoint:** `POST https://api.mem0.ai/v1/memories/search/`
+* **Fact Storage Endpoint:** `POST https://api.mem0.ai/v1/memories/`
+* **Goal:** Store long-term semantic context about users and retrieve facts to rephrase vague follow-up questions.
+* **Payload Examples:**
+  - **Retrieve Facts:**
+    ```json
+    {
+      "query": "what is their salary?",
+      "user_id": "user_abc123"
+    }
+    ```
+  - **Store Facts:**
+    ```json
+    {
+      "messages": [
+        {"role": "user", "content": "Let's focus on employees earning over 80000."},
+        {"role": "assistant", "content": "I will keep employee salaries above 80k in mind."}
+      ],
+      "user_id": "user_abc123"
+    }
+    ```
+
+---
+
+### 2. Rephrasing & Contextualization API
+* **Endpoint:** `POST https://api.groq.com/openai/v1/chat/completions` (via SDK client)
+* **Goal:** Convert conversational inputs (like *"what is that?"*) into self-contained search terms using context from recent turns and mem0 facts.
 * **Payload Structure:**
   ```python
   from llm.llm_client import generate_text
@@ -95,6 +161,9 @@ DB_DATABASE=ai_sql_db
   Conversation History:
   User: Which specialization has the best placements?
   Assistant: Mkt&Fin has the highest paid placements.
+
+  Retrieved Memory Facts:
+  - User is interested in MBA specializations.
 
   Latest Follow-up Question: "what is Mkt&Fin ?"
   Standalone Question:"""
@@ -105,9 +174,9 @@ DB_DATABASE=ai_sql_db
 
 ---
 
-### 2. Intent Routing & Classification
-* **Endpoint:** `https://api.groq.com/openai/v1/chat/completions`
-* **Goal:** Classify query intent into `CHAT`, `SCHEMA_INFO`, or `SQL_QUERY`.
+### 3. Intent Routing & Classification
+* **Endpoint:** `POST https://api.groq.com/openai/v1/chat/completions`
+* **Goal:** Classify query intent into one of 9 routing categories: `CHAT`, `SQL_QUERY`, `SCHEMA_INFO`, `DESCRIBE`, `DATA_PREVIEW`, `SCHEMA_EXPLANATION`, `CONVERSATION_SUMMARY`, `TEMPORAL`, or `GENERAL_KNOWLEDGE`.
 * **Flow:** 
   1. Executes a fast regex scan (0ms).
   2. If ambiguous, makes an LLM routing API call:
@@ -118,12 +187,12 @@ DB_DATABASE=ai_sql_db
 
 ---
 
-### 3. Vector Database Retrieval (Qdrant)
+### 4. Vector Database Retrieval (Qdrant)
 * **Endpoint:** `POST /collections/{collection_name}/points/query`
 * **Goal:** Retrieve schema chunks matching the semantic meaning of the user query.
 * **Flow:**
-  * If a fast keyword match is found in the local schema cache, this network call is **bypassed (0ms)**.
-  * If a cache miss occurs, the system makes a hybrid dense + sparse query:
+  * Checks `query_cache` first.
+  * If a cache miss occurs, the system makes a hybrid dense + sparse query against `sql_table_schemas` (`SCHEMA_COLLECTION`):
     ```python
     # Using python qdrant-client
     client.query_points(
