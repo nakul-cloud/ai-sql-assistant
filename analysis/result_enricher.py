@@ -74,6 +74,9 @@ def enrich_sql_result(query_result: Dict[str, Any], sql_query: str = None) -> Di
         except Exception as e:
             logger.warning(f"Could not fetch table total rows: {e}")
 
+    # Dynamic sample limit: send more rows (up to 150) for GROUP BY or small datasets
+    sample_limit = 150 if (has_group_by or row_count <= 150) else 10
+
     # ── Build enrichment ──────────────────────────────────────────────────────
     enrichment = {
         "total_rows": row_count,                          # rows in THIS result
@@ -82,7 +85,7 @@ def enrich_sql_result(query_result: Dict[str, Any], sql_query: str = None) -> Di
         "is_count_query": is_count_query,                 # True if result IS the aggregate answer
         "columns": query_result.get("columns", []),
         "column_stats": {},
-        "data_sample": df.head(5).to_dict(orient="records")
+        "data_sample": df.head(sample_limit).to_dict(orient="records")
     }
 
     # Numeric stats

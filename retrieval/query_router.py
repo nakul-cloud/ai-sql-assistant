@@ -43,6 +43,16 @@ CHAT_PATTERNS = [
     r"^(who\s+are\s+you|what\s+is\s+your\s+name|what\s+do\s+you\s+do|what\s+can\s+you\s+do)(\b|\s|$)",
 ]
 
+CONVERSATION_SUMMARY_PATTERNS = [
+    r"\b(what\s+did\s+we\s+discuss|what\s+have\s+we\s+discussed|summarize\s+our\s+conversation|what\s+have\s+we\s+analyzed|recap|conversation\s+history|history\s+of\s+our\s+chat)\b",
+    r"\b(what\s+did\s+i\s+ask|what\s+we\s+have\s+discussed|what\s+we\s+discussed|summarise\s+our\s+conversation)\b",
+]
+
+DATA_PREVIEW_PATTERNS = [
+    r"\b(show|display|get|list|view|give\s+me|preview)\b.*\b(records|rows|data|sample|preview|entries|dataset|table)\b",
+    r"^(records|rows|data|sample|preview)$",
+]
+
 TEMPORAL_PATTERNS = [
     r"\b(what|whats|what's)\b.*(today|current\s+date|current\s+time|right\s+now)\b",
     r"\bwhat\s+(day|date|time|year|month)\s+(is\s+it|is\s+today|are\s+we\s+in)\b",
@@ -253,10 +263,12 @@ def pre_check_intent(user_query: str) -> Optional[str]:
     Check order matters:
     1. TEMPORAL  — must be before SQL (date queries can contain numbers/years)
     2. CHAT      — must be before SQL (greetings can mention data words)
-    3. GENERAL_KNOWLEDGE — must be before SQL (general "who is" off-topic questions)
-    4. SCHEMA_INFO
-    5. DESCRIBE
-    6. SQL_QUERY — universal signals first, then dynamic schema terms
+    3. CONVERSATION_SUMMARY
+    4. GENERAL_KNOWLEDGE — must be before SQL (general "who is" off-topic questions)
+    5. SCHEMA_INFO
+    6. DESCRIBE
+    7. DATA_PREVIEW
+    8. SQL_QUERY — universal signals first, then dynamic schema terms
     """
     q = user_query.strip().lower()
 
@@ -271,6 +283,12 @@ def pre_check_intent(user_query: str) -> Optional[str]:
         if re.match(pattern, q, re.IGNORECASE):
             logger.debug(f"CHAT match: '{q}'")
             return "CHAT"
+
+    # ── 2.5 CONVERSATION_SUMMARY ──────────────────────────────────────────────
+    for pattern in CONVERSATION_SUMMARY_PATTERNS:
+        if re.search(pattern, q, re.IGNORECASE):
+            logger.debug(f"CONVERSATION_SUMMARY match: '{q}'")
+            return "CONVERSATION_SUMMARY"
 
     # ── 3. GENERAL_KNOWLEDGE (before SQL — "who is X" can look like SQL) ─────
     for pattern in GENERAL_KNOWLEDGE_PATTERNS:
@@ -326,6 +344,20 @@ def pre_check_intent(user_query: str) -> Optional[str]:
                 logger.debug(f"DESCRIBE match: '{q}'")
                 return "DESCRIBE"
 
+    # ── 5.5 DATA_PREVIEW ──────────────────────────────────────────────────────
+    for pattern in DATA_PREVIEW_PATTERNS:
+        if re.search(pattern, q, re.IGNORECASE):
+            # Make sure it's not actually an analytical query (SQL_QUERY)
+            analytical_words = [
+                "by", "order", "group", "sort", "filter", "where", "highest", "lowest",
+                "average", "sum", "count", "compare", "vs", "versus", "more than", "less than",
+                "limit", "top", "bottom", "maximum", "minimum", "max", "min", "mean", "avg"
+            ]
+            has_analytical = any(re.search(r"\b" + re.escape(w) + r"\b", q) for w in analytical_words)
+            if not has_analytical:
+                logger.debug(f"DATA_PREVIEW match: '{q}'")
+                return "DATA_PREVIEW"
+
     # ── 6. SQL_QUERY — universal signals ─────────────────────────────────────
     for pattern in UNIVERSAL_SQL_PATTERNS:
         if re.search(pattern, q, re.IGNORECASE):
@@ -345,18 +377,19 @@ def pre_check_intent(user_query: str) -> Optional[str]:
 # ── LangChain intent classifier (LLM fallback only) ──────────────────────────
 
 INTENT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Classify the user's message into exactly one of these seven intents:
+    ("system", """Classify the user's message into exactly one of these intents:
 
-- SQL_QUERY          : User wants data, reports, counts, lists, or analysis from the database.
-- SCHEMA_INFO        : User asks about table names, database structure, or what tables exist.
-- SCHEMA_EXPLANATION : User asks what a specific column, field, or metric means or represents.
-                       Examples: "what is ssc_p", "explain ai_adoption_level", "what does salary mean"
-- DESCRIBE           : User wants a plain English overview of what a dataset or table contains.
-- TEMPORAL           : User asks about current date, time, day, or how long ago something was.
-- GENERAL_KNOWLEDGE  : User asks about real-world facts, people, politics, news, or events not in the database.
-- CHAT               : Greetings, thanks, small talk, or conversational messages.
+- SQL_QUERY            : User wants to analyze data, compute averages/sums/counts, sort/filter records, compare values, or get trends.
+- DATA_PREVIEW         : User simply wants to view/show the raw rows, records, table, or dataset without analyzing it. Examples: "show me the records", "preview the rows", "show dataset".
+- CONVERSATION_SUMMARY : User asks to summarize or recap what was discussed or asked in the chat. Examples: "what did we discuss", "recap our conversation".
+- SCHEMA_INFO          : User asks about table names, database structure, or what tables exist.
+- SCHEMA_EXPLANATION   : User asks what a specific column, field, or metric means or represents.
+- DESCRIBE             : User wants a plain English overview of what a dataset or table contains.
+- TEMPORAL             : User asks about current date, time, day, or how long ago something was.
+- GENERAL_KNOWLEDGE    : User asks about real-world facts, people, politics, news, or events not in the database.
+- CHAT                 : Greetings, thanks, small talk, or conversational messages.
 
-Reply with ONLY one word. No explanation."""),
+Reply with ONLY the matching intent name (e.g. SQL_QUERY, DATA_PREVIEW, CONVERSATION_SUMMARY, etc.). No explanation."""),
     ("human", "{user_query}")
 ])
 
@@ -369,7 +402,7 @@ def build_intent_chain():
 _intent_chain = build_intent_chain()
 
 VALID_INTENTS = {"CHAT", "SQL_QUERY", "SCHEMA_INFO", "SCHEMA_EXPLANATION",
-                 "DESCRIBE", "TEMPORAL", "GENERAL_KNOWLEDGE"}
+                 "DESCRIBE", "TEMPORAL", "GENERAL_KNOWLEDGE", "CONVERSATION_SUMMARY", "DATA_PREVIEW"}
 
 
 def llm_classify_intent(user_query: str) -> str:

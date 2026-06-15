@@ -109,6 +109,19 @@ def get_keyword_map() -> dict:
                     if len(part_lower) > 2 and part_lower not in STOP_WORDS:
                         keyword_map.setdefault(part_lower, set()).add(tbl_name)
 
+        # Sample-value keywords (categorical values from live data)
+        for col in tbl["columns"]:
+            sample_vals = tbl.get("sample_values", {}).get(col["name"], [])
+            for val in sample_vals:
+                val_str = str(val).strip().lower()
+                # Only index short, non-numeric, categorical-looking values
+                if (val_str
+                        and len(val_str) > 1
+                        and len(val_str) <= 20
+                        and not val_str.replace('.', '', 1).isdigit()
+                        and val_str not in STOP_WORDS):
+                    keyword_map.setdefault(val_str, set()).add(tbl_name)
+
     # Convert sets to lists
     _keyword_map = {k: list(v) for k, v in keyword_map.items()}
     return _keyword_map

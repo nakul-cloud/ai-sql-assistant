@@ -18,7 +18,7 @@ from langchain_groq import ChatGroq
 load_dotenv(override=True)
 logger = logging.getLogger(__name__)
 
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 _groq_client = None
 

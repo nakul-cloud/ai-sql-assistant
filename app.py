@@ -33,6 +33,19 @@ def init_background_scheduler():
 
 init_background_scheduler()
 
+# Initialize mem0 conversational memory once at startup
+from memory.mem0_manager import init_memory
+@st.cache_resource
+def _init_mem0():
+    return init_memory()
+
+_init_mem0()
+
+# Generate a session-scoped user_id so each browser tab has its own memory
+if "user_id" not in st.session_state:
+    import uuid
+    st.session_state["user_id"] = f"user_{uuid.uuid4().hex[:8]}"
+
 # Page configuration
 st.set_page_config(
     page_title="AI SQL Assistant Dashboard",

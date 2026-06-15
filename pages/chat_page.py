@@ -53,6 +53,11 @@ st.markdown("""
 st.title("💬 AI SQL Analytics Assistant")
 st.markdown("Ask analytical questions about your database tables in natural language.")
 
+# Ensure consistent, unique user_id is initialized
+if "user_id" not in st.session_state:
+    import uuid
+    st.session_state["user_id"] = f"user_{uuid.uuid4().hex[:8]}"
+
 # Initialize session state for chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -117,7 +122,13 @@ if user_input:
     with st.chat_message("assistant"):
         with st.spinner("Analyzing tables and generating insights..."):
             focus_list = selected_tables if selected_tables else None
-            res = process_user_query(user_input, focus_tables=focus_list, chat_history=st.session_state.messages[:-1], stream=True)
+            res = process_user_query(
+                user_input,
+                focus_tables=focus_list,
+                chat_history=st.session_state.messages[:-1],  # kept for compat
+                stream=True,
+                user_id=st.session_state["user_id"]
+            )
             
             if not res["success"]:
                 raw_error = res.get("error", "Query processing failed.")

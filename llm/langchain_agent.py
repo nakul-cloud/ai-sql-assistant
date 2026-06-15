@@ -49,7 +49,7 @@ def run_autonomous_sql_agent(user_query: str) -> Dict[str, Any]:
         db = SQLDatabase(engine)
 
         # 2. Initialize the LLM (with dynamic fallbacks if keys are available)
-        groq_model = os.getenv("GROQ_AGENT_MODEL", "llama-3.3-70b-versatile")
+        groq_model = os.getenv("GROQ_AGENT_MODEL", "openai/gpt-oss-120b")
         primary_llm = ChatGroq(
             model_name=groq_model,
             groq_api_key=api_key,

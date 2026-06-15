@@ -52,9 +52,18 @@ If a column or table does not exist in the schema, do not invent it.
 
 ── T-SQL SYNTAX RULES ────────────────────────────────────────────────────────
 - Use TOP instead of LIMIT.
-- For overview, summary, or "give me an idea of" queries, use TOP 100 minimum. Never use TOP 1 or TOP 5 unless the user explicitly asks for a single record or the question is clearly asking for a single best/worst value.
+- DISTINCT must come before TOP: SELECT DISTINCT TOP [N] ... NOT SELECT TOP [N] DISTINCT ...
+- ── OVERVIEW / SUMMARY / STATISTICS QUERIES ──────────────────────────
+  If the user's question asks for an overview, summary, statistics, distribution, average, count, min/max, most common value, or what a dataset/table tells/shows us (e.g. 'what [table] tells?', 'what does this dataset tell us') — and does NOT ask to see individual records — you MUST generate a query that computes aggregate statistics (such as COUNT(*), AVG, MAX, MIN, SUM, or GROUP BY distributions on numeric/categorical columns) OVER THE ENTIRE TABLE. Do NOT generate a record-level query and do NOT add any TOP clause. A TOP clause or record-level select for overview/summary questions is incorrect as it restricts the overview to a small sample.
+
+  Examples of this pattern (illustrative only, adapt columns/tables to the actual schema provided):
+    - 'what does this dataset tell us' / 'give me an overview of X' / 'what X tells'
+      → generate one query (or several, depending on what's natural) computing relevant aggregates: COUNT(*), AVG(numeric_col), MAX(numeric_col), MIN(numeric_col), and/or GROUP BY for categorical distributions — all WITHOUT TOP.
+    - 'what is the most common X' → SELECT X, COUNT(*) FROM table GROUP BY X ORDER BY COUNT(*) DESC (no TOP, unless user asks for 'top N most common').
+
+- ── RECORD-VIEWING QUERIES ───────────────────────────────────────────
+  If the user's question asks to see/show/list/preview/display actual records or rows (not aggregates), and does not specify a number, do NOT add any TOP clause — the database executor's row-limit safeguard (MAX_RESULT_ROWS) already handles large result sets at execution time. Only add TOP/LIMIT if the user explicitly specifies a number ('show me 10 records', 'top 5 by X').
 - TOP 1 is only appropriate for: "which company has the highest X", "who has the most X", "what is the maximum X" — single best/worst queries only.
-- DISTINCT must come before TOP: SELECT DISTINCT TOP 10 ... NOT SELECT TOP 10 DISTINCT ...
 - Never use SELECT *. Always list required columns explicitly.
 - Use proper table aliases (e.g. e for employees, o for orders).
 - Wrap column/table names with spaces or reserved words in square brackets: [column name].
@@ -77,6 +86,10 @@ If a column or table does not exist in the schema, do not invent it.
 - Match natural terms precisely: If a user asks for "role", "title", or "job", check the schema for columns containing "role", "title", "job", "position", or "occupation". Do not select "seniority" or "department" to represent the "role" unless no title/role columns exist.
 - Handling "demand" / "popularity": Map "demand", "popularity", or "market growth" of an entity/category to its record count (COUNT(*)) or frequency.
 - Handling "trends" / "future": If the user asks for trends, outlook, or future projection, query for the metrics grouped by year/date (or filter for the most recent years) to allow the response generator to explain the trajectory.
+- Range queries ('range of X', 'minimum and maximum X', 'spread of X', 'lowest and highest X', 'min and max X'): use a SINGLE query with both MIN(X) and MAX(X) as separate aliased columns in one SELECT:
+    SELECT MIN(column_name) AS min_column_name, MAX(column_name) AS max_column_name FROM table WHERE condition
+  Do NOT use UNION of two separate TOP 1 ... ORDER BY queries to simulate a range — this produces invalid T-SQL (ORDER BY cannot appear in a UNION member without subquery wrapping) and will fail at execution.
+- TOP and aggregate functions (MIN, MAX, AVG, COUNT, SUM) should virtually NEVER appear in the same query, and UNION should NEVER be used to combine two single-row TOP+ORDER BY results to derive a min/max pair — a single aggregate SELECT with MIN()/MAX() always replaces this pattern correctly and is valid T-SQL.
 - Multi-table queries: use explicit JOIN with ON conditions derived from schema PKs/FKs.
   Prefer INNER JOIN unless the question implies optional/missing records (then LEFT JOIN).
 - If the question asks for a count, use COUNT(*) or count(column) as appropriate.
@@ -92,7 +105,7 @@ If a column or table does not exist in the schema, do not invent it.
 - "Tell me a joke / explain a concept / summarize news" → OUT_OF_SCOPE
 - "Show data from a table not in the schema" → CANNOT_GENERATE
 - Vague questions with no schema match (e.g. "show everything") → generate a
-  reasonable bounded query (TOP 100) on the most relevant table, do not return
+  query selecting the relevant columns from the main/most relevant table without a TOP clause, do not return
   CANNOT_GENERATE for ambiguous but answerable questions.
 """),
     ("human", """Database Schema:
@@ -110,16 +123,29 @@ T-SQL Query:""")
 def clean_sql_query(sql_text: str) -> str:
     """
     Cleans LLM SQL response by removing markdown blocks and whitespace.
+    Extracts the query starting from SELECT or WITH if conversational wrappers exist.
     Also auto-corrects SQL Server specific syntax errors like TOP DISTINCT.
     """
     if not sql_text:
         return ""
 
     cleaned = sql_text.strip()
+    
+    # Remove surrounding double/single quotes if the entire string is wrapped
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or (cleaned.startswith("'") and cleaned.endswith("'")):
+        cleaned = cleaned[1:-1].strip()
+
     # Remove markdown code blocks if present
     cleaned = re.sub(r"```sql", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"```", "", cleaned)
-    
+    cleaned = cleaned.strip()
+
+    # If the response contains preamble text before SELECT/WITH, extract the query
+    # Check for WITH first or SELECT
+    match_start = re.search(r"\b(SELECT|WITH)\b", cleaned, re.IGNORECASE)
+    if match_start:
+        cleaned = cleaned[match_start.start():].strip()
+
     # Auto-correct TOP DISTINCT syntax error for MS SQL Server
     # e.g., "SELECT TOP 100 DISTINCT col" -> "SELECT DISTINCT TOP 100 col"
     cleaned = re.sub(
@@ -133,7 +159,7 @@ def clean_sql_query(sql_text: str) -> str:
 
 def validate_sql_response(sql_query: str) -> None:
     """
-    Validates that the generated SQL is safe and is a SELECT statement.
+    Validates that the generated SQL is safe and is a SELECT or WITH statement.
     """
     forbidden_keywords = {
         "DROP", "DELETE", "TRUNCATE", "ALTER", "UPDATE", "INSERT",
@@ -165,7 +191,7 @@ def validate_sql_response(sql_query: str) -> None:
         if re.search(pattern, upper_query):
             raise ValueError(f"Unsafe SQL detected: Forbidden function '{func}' used.")
 
-    if not upper_query.startswith("SELECT"):
+    if not (upper_query.startswith("SELECT") or upper_query.startswith("WITH")):
         raise ValueError("Generated SQL is not a SELECT query.")
 
 
