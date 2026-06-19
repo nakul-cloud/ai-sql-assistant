@@ -1,0 +1,7 @@
+# Exclude documents, papers, and markdown files from semantic extraction
+*.pdf
+*.docx
+*.md
+*.txt
+.github/skills/
+data/
