@@ -28,6 +28,7 @@ def run_autonomous_sql_agent(user_query: str) -> Dict[str, Any]:
             "error": "GROQ_API_KEY not found in environment variables."
         }
 
+
     try:
         # Force pre-import langchain_classic to avoid Windows C-extension / pyodbc DLL collisions
         from langchain_classic.agents import (
